@@ -17,13 +17,13 @@ static int libbpf_print_fn(enum libbpf_print_level level, const char *format, va
 	return vfprintf(stdout, format, args);
 }
 
-static void handle_event(void *ctx, int cpu, void *data, unsigned int data_sz)
+static void handle_event(void *ctx, int cpu, void *data, __u32 data_sz)
 {
 	const struct stack_trace_t *e = data;
 	struct tm *tm;
 	char ts[32];
 	time_t t;
-	int i = 0;
+	int i, j, row_size, num_rows = 0;
 	time(&t);
 	tm = localtime(&t);
 	strftime(ts, sizeof(ts), "%H:%M:%S", tm);
@@ -33,25 +33,33 @@ static void handle_event(void *ctx, int cpu, void *data, unsigned int data_sz)
 	log_info("PID -> %d", e->pid);
 	log_info("Kernel stack size -> %d", e->kern_stack_size);
 	log_info("User stack size -> %d", e->user_stack_size);
-	log_info("Dumping kernel stack data [%d]", MAX_STACK_RAWTP);
 
-	for(; i < MAX_STACK_RAWTP; ++i) {
-		log_info("%llu", e->kern_stack[i]);
+	/*
+	log_info("Dumping kernel stack data [%d]", MAX_STACK_RAWTP);
+	   for(i = 0; i < MAX_STACK_RAWTP; ++i) {
+		printf("%llu", e->kern_stack[i]);
+	}*/
+		
+	log_info("Dumping user stack data [%d bytes]", MAX_STACK_RAWTP);
+
+	num_rows = 5;
+	row_size = MAX_STACK_RAWTP / num_rows;	
+	for(i = 0; i < num_rows; ++i) {
+		for(j = 0; j < row_size; ++j) {
+			printf("%llu ", e->user_stack[i]);        
+		}
+		printf("\n");
 	}
-	
-	i = 0;
-	log_info("Dumping user stack data [%d]", MAX_STACK_RAWTP);
-	
-	for(; i < MAX_STACK_RAWTP; ++i) {
-		log_info("%llu", e->user_stack[i]);        
-	}
+	log_info("-----------------------------------------------");
+
 }
 
 int main(int argc, char **argv) 
 {
     struct get_stacktrace_bpf *skel;
     struct perf_buffer *perf_buf;
-    
+    int ret = 0; 
+
     /* Set up libbpf errors and debug info callback */
     libbpf_set_print(libbpf_print_fn);
 
@@ -74,7 +82,7 @@ int main(int argc, char **argv)
     log_info("[+] Successfully attached to BFP program");
     
     log_info("[+] Creating a BPF perfbuffer manager...");
-    perf_buf = perf_buffer__new(bpf_map__fd(skel->maps.perfmap), 1, handle_event, NULL, NULL, NULL);
+    perf_buf = perf_buffer__new(bpf_map__fd(skel->maps.perfmap), 8, handle_event, NULL, NULL, NULL);
     if (!perf_buf) {
         log_error("[!] Error creating perf buffer");
         get_stacktrace_bpf__destroy(skel);        
@@ -83,10 +91,7 @@ int main(int argc, char **argv)
     log_info("[+] Perfbuffer successfully created");
     
     log_info("[+] Polling events from perfbuffer...");
-    while (1) {
-        perf_buffer__poll(perf_buf, -1); // Block indefinitely until an event arrives
-        // Handle perf events here
-    }
+    while ((ret = perf_buffer__poll(perf_buf, 100)) >= 0) {}
 
     perf_buffer__free(perf_buf);
     get_stacktrace_bpf__destroy(skel);        

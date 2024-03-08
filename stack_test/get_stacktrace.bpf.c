@@ -1,7 +1,6 @@
 #include <linux/bpf.h>
 #include <bpf/bpf_helpers.h>
 #include <stdio.h>
-
 #include "get-stacktrace.h"
 
 struct {
@@ -43,24 +42,45 @@ struct {
 // 	__type(value, __u64[2 * MAX_STACK_RAWTP]);
 // } rawdata_map SEC(".maps");
 
-SEC("raw_tracepoint/sys_enter")
-int get_stacktrace(void *ctx)
+// struct my_syscalls_enter {
+// 	unsigned short 	common_type;
+// 	unsigned char 	common_flag;
+// 	unsigned char   common_preempt_count;
+// 	int common_pid;
+// 
+// 	long syscall_nr;
+// 	long filename_ptr;
+// 	long argv_ptr;
+// 	long envp_ptr;
+// };
+
+struct raw_syscalls_enter {
+	unsigned short 	common_type;
+	unsigned char 	common_flag;
+	unsigned char   common_preempt_count;
+	int common_pid;
+
+	long id;
+	unsigned long args[6];	
+};
+
+
+// SEC("tp/syscalls/sys_enter_execve")
+SEC("tp/raw_syscalls/sys_enter")
+int get_stacktrace(struct raw_syscalls_enter *ctx)
 {
 	int max_len, max_buildid_len, total_size;
 	struct stack_trace_t *data;
 	long usize, ksize;
 	void *raw_data;
 	__u32 key = 0;
-	const char *message_start = "[+] Retrieving element from map...\n";
-	const char *message_end = "[!] Error while retrieving stack element from stackdata map\n";
-	bpf_trace_printk(message_start);
-	
+		
 	data = bpf_map_lookup_elem(&stackdata_map, &key);
 	if (!data) {
-		bpf_trace_printk(message_end);
 		return 0;
 	}
-
+	
+	bpf_printk("[syscall: %ld] (%lx, %s, %lx, %lx, %lx, %lx)", ctx->id, ctx->args[0], ctx->args[1], ctx->args[2], ctx->args[3], ctx->args[4], ctx->args[5]);
 
 	max_len = MAX_STACK_RAWTP * sizeof(__u64);
 	max_buildid_len = MAX_STACK_RAWTP * sizeof(struct bpf_stack_build_id);
