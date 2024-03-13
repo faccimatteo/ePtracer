@@ -46,7 +46,7 @@ static void handle_event(void *ctx, int cpu, void *data, __u32 data_sz)
 	row_size = MAX_STACK_RAWTP / num_rows;	
 	for(i = 0; i < num_rows; ++i) {
 		for(j = 0; j < row_size; ++j) {
-			printf("%llu ", e->user_stack[i]);        
+			printf("%llu ", e->user_stack[(i * row_size) + j]);        
 		}
 		printf("\n");
 	}
@@ -56,45 +56,59 @@ static void handle_event(void *ctx, int cpu, void *data, __u32 data_sz)
 
 int main(int argc, char **argv) 
 {
-    struct get_stacktrace_bpf *skel;
-    struct perf_buffer *perf_buf;
-    int ret = 0; 
+	struct get_stacktrace_bpf *skel;
+	struct perf_buffer *perf_buf;
+	int program_map_fd;
+	int ret = 0; 
 
-    /* Set up libbpf errors and debug info callback */
-    libbpf_set_print(libbpf_print_fn);
+	/* Set up libbpf errors and debug info callback */
+	libbpf_set_print(libbpf_print_fn);
 
-    log_info("[+] Loading BPF program into kernel...");
-    skel = get_stacktrace_bpf__open_and_load();
-    if (!skel) {
-        log_error("[!] Error opening and loading BPF file");
-        return 1;
-    }
-    log_info("[+] BFP program correctly loaded");
+	log_info("[+] Loading BPF program into kernel...");
+	skel = get_stacktrace_bpf__open_and_load();
+	if (!skel) {
+		log_error("[!] Error opening and loading BPF file");
+		return 1;
+	}
+	log_info("[+] BFP program correctly loaded");
 
-    
-    log_info("[+] Attaching to BPF program...");
-    errno = get_stacktrace_bpf__attach(skel);
-    if (errno) { 
-        log_error( "[!] Error finding BPF program");
-        get_stacktrace_bpf__destroy(skel);
-        return 1;
-    }
-    log_info("[+] Successfully attached to BFP program");
-    
-    log_info("[+] Creating a BPF perfbuffer manager...");
-    perf_buf = perf_buffer__new(bpf_map__fd(skel->maps.perfmap), 8, handle_event, NULL, NULL, NULL);
-    if (!perf_buf) {
-        log_error("[!] Error creating perf buffer");
-        get_stacktrace_bpf__destroy(skel);        
-        return 1;
-    }
-    log_info("[+] Perfbuffer successfully created");
-    
-    log_info("[+] Polling events from perfbuffer...");
-    while ((ret = perf_buffer__poll(perf_buf, 100)) >= 0) {}
 
-    perf_buffer__free(perf_buf);
-    get_stacktrace_bpf__destroy(skel);        
+	log_info("[+] Attaching to BPF program...");
+	errno = get_stacktrace_bpf__attach(skel);
+	if (errno) { 
+		log_error( "[!] Error finding BPF program");
+		get_stacktrace_bpf__destroy(skel);
+		return 1;
+	}
+	log_info("[+] Successfully attached to BFP program");
 
-    return 0;
+	// log_info("[+] Setting user program to trace...");
+	// program_map_fd = bpf_map__fd(skel->maps.program_map);
+	// 
+	// if (program_map_fd == EINVAL) {
+	// 	log_error("[!] Error getting program map");	
+	// 	return 1;	
+	// }
+
+	// if (bpf_map_update_elem(program_map_fd , "firefox-esr", 1) < 0) {
+	// 	log_error("[!] Error setting program to trace");	
+	// 	return 1;
+	// }
+
+	log_info("[+] Creating a BPF perfbuffer manager...");
+	perf_buf = perf_buffer__new(bpf_map__fd(skel->maps.perfmap), 8, handle_event, NULL, NULL, NULL);
+	if (!perf_buf) {
+		log_error("[!] Error creating perf buffer");
+		get_stacktrace_bpf__destroy(skel);        
+		return 1;
+	}
+	log_info("[+] Perfbuffer successfully created");
+
+	log_info("[+] Polling events from perfbuffer...");
+	while ((ret = perf_buffer__poll(perf_buf, 100)) >= 0) {}
+
+	perf_buffer__free(perf_buf);
+	get_stacktrace_bpf__destroy(skel);        
+
+	return 0;
 }
