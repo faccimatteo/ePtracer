@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <linux/sched.h>
 #include <string.h>
+#include <stdlib.h>
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
@@ -15,10 +16,10 @@ struct {
 } perfmap SEC(".maps");
 
 struct {
-	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
+	__uint(type, BPF_MAP_TYPE_ARRAY);
 	__uint(max_entries, 10);
-	__uint(key_size, sizeof(char *));
-	__uint(value_size, sizeof(_Bool));
+	__type(key, __u32);
+	__type(value, struct program_info); 
 } program_map SEC(".maps");
 
 
@@ -76,6 +77,7 @@ struct syscalls_enter_excve {
 	const char *const * envp;	
 };
 
+
 SEC("tp/raw_syscalls/sys_enter")
 int get_stacktrace(struct raw_syscalls_enter *ctx)
 {
@@ -87,24 +89,37 @@ int get_stacktrace(struct raw_syscalls_enter *ctx)
  	__u32 pid;
  	__u32 tgid;
  	__u64 pid_tgid;		
-	const char* target_program = "bomb";
 	char program_name[100];
-	
+	struct program_info *program_to_trace;
+	char *program_to_trace_name;
 
  	data = bpf_map_lookup_elem(&stackdata_map, &key);
- 	if (!data) {
+ 	if (!data) 
+	{
  		return 0;
  	}
  	
 
-	if (bpf_get_current_comm(&program_name, sizeof(program_name)) < 0) {
-		bpf_printk("Error while getting process name");
+	if (bpf_get_current_comm(&program_name, sizeof(program_name)) < 0) 
+	{
+		bpf_printk("[!] Error while getting process name");
 		return 0;
 	}
 
-	if (!bpf_map_lookup_elem(&program_map, &program_name)) {
-		// skip process if not present in the map
+	program_to_trace = bpf_map_lookup_elem(&program_map, &key);
+	if (!program_to_trace) 
+	{
 		return 0;
+	}
+
+	// skip process if not present in the map
+	// TODO: try to fix it by providing last len as a multiple of 8 as described in https://man7.org/linux/man-pages/man7/bpf-helpers.7.html
+	bpf_snprintf(program_to_trace_name, program_to_trace->len, "%llu", &program_to_trace->name, program_to_trace->len);
+	bpf_printk("[+] Program name: %s", program_name);
+	bpf_printk("[+] Program to trace: %s", program_to_trace_name);
+	if (!bpf_strncmp(program_name, program_to_trace->len, program_to_trace_name))
+	{
+		return 0;	
 	}
 	
 	
@@ -113,9 +128,11 @@ int get_stacktrace(struct raw_syscalls_enter *ctx)
   	tgid = pid_tgid & 0xffff;
 		
 	bpf_printk("[+] Program: %s", program_name);
-	bpf_printk("	PID: %llu", pid);
-	bpf_printk("	TGID: %llu", tgid);
- 	bpf_printk("	[syscall: %ld] (%lx, %s, %lx, %lx, %lx, %lx)", ctx->id, ctx->args[0], ctx->args[1], ctx->args[2], ctx->args[3], ctx->args[4], ctx->args[5]);
+	bpf_printk("	PID: 		%llu", pid);
+	bpf_printk("	TGID: 		%llu", tgid);
+	bpf_printk("	syscall: 	%llu", "");
+	bpf_printk("	syscall id: 	%ld", ctx->id);
+ 	bpf_printk("	args: 		(%lx, %s, %lx, %lx, %lx, %lx)",  ctx->args[0], ctx->args[1], ctx->args[2], ctx->args[3], ctx->args[4], ctx->args[5]);
  
  	max_len = MAX_STACK_RAWTP * sizeof(__u64);
  	max_buildid_len = MAX_STACK_RAWTP * sizeof(struct bpf_stack_build_id);

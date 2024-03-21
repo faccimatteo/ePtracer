@@ -1,11 +1,11 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <errno.h>
+#include <bpf/bpf.h>
 #include <bpf/libbpf.h>
 #include <stdio.h>
 #include <time.h>
 #include <sys/resource.h>
-#include <bpf/libbpf.h>
 #include "get-stacktrace.h"
 #include "get_stacktrace.skeleton.h"
 #include "./log/src/log.h"
@@ -16,6 +16,21 @@ static int libbpf_print_fn(enum libbpf_print_level level, const char *format, va
 {
 	return vfprintf(stdout, format, args);
 }
+
+int initialize_array(int fd)
+{
+        char* value = "bomb"; 
+	long name = strtol(value, NULL, 10);
+	long len = 5;
+	struct program_info p;
+	p.name = name;
+	p.len = len;
+
+        __u32 i = 0;
+	/* Setting program to trace for all the CPUs */
+        return bpf_map_update_elem(fd, &i, &p, BPF_ANY);
+}
+
 
 static void handle_event(void *ctx, int cpu, void *data, __u32 data_sz)
 {
@@ -58,9 +73,8 @@ int main(int argc, char **argv)
 {
 	struct get_stacktrace_bpf *skel;
 	struct perf_buffer *perf_buf;
-	int program_map_fd;
 	int ret = 0; 
-
+		
 	/* Set up libbpf errors and debug info callback */
 	libbpf_set_print(libbpf_print_fn);
 
@@ -82,18 +96,13 @@ int main(int argc, char **argv)
 	}
 	log_info("[+] Successfully attached to BFP program");
 
-	// log_info("[+] Setting user program to trace...");
-	// program_map_fd = bpf_map__fd(skel->maps.program_map);
-	// 
-	// if (program_map_fd == EINVAL) {
-	// 	log_error("[!] Error getting program map");	
-	// 	return 1;	
-	// }
-
-	// if (bpf_map_update_elem(program_map_fd , "firefox-esr", 1) < 0) {
-	// 	log_error("[!] Error setting program to trace");	
-	// 	return 1;
-	// }
+	log_info("[+] Setting user program to trace...");
+	if (initialize_array(bpf_map__fd(skel->maps.program_map)) < 0) 
+	{
+		log_error("[!] Error setting program to trace");
+		get_stacktrace_bpf__destroy(skel);
+		return 1;
+	}
 
 	log_info("[+] Creating a BPF perfbuffer manager...");
 	perf_buf = perf_buffer__new(bpf_map__fd(skel->maps.perfmap), 8, handle_event, NULL, NULL, NULL);
