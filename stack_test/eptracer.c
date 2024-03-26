@@ -1,3 +1,4 @@
+#include <args.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <errno.h>
@@ -19,16 +20,12 @@ static int libbpf_print_fn(enum libbpf_print_level level, const char *format, va
 
 int initialize_array(int fd)
 {
-        char* value = "bomb"; 
-	long name = strtol(value, NULL, 10);
-	long len = 5;
-	struct program_info p;
-	p.name = name;
-	p.len = len;
-
+        char name[MAX_PROGRAM_STRING_LEN] = "bomb";
+	log_info("[+] Starting tracing program: %s", name);
         __u32 i = 0;
+
 	/* Setting program to trace for all the CPUs */
-        return bpf_map_update_elem(fd, &i, &p, BPF_ANY);
+        return bpf_map_update_elem(fd, &i, &name, BPF_ANY);
 }
 
 
@@ -73,8 +70,13 @@ int main(int argc, char **argv)
 {
 	struct get_stacktrace_bpf *skel;
 	struct perf_buffer *perf_buf;
-	int ret = 0; 
-		
+	int err, ret = 0; 
+
+	/* Parsing command line arguments */
+	err = argp_parse(&argp, argc, argv, 0, NULL, NULL);
+        if (err)
+                return err;
+
 	/* Set up libbpf errors and debug info callback */
 	libbpf_set_print(libbpf_print_fn);
 
@@ -103,6 +105,8 @@ int main(int argc, char **argv)
 		get_stacktrace_bpf__destroy(skel);
 		return 1;
 	}
+	log_info("[+] Successfully set user program to trace");
+
 
 	log_info("[+] Creating a BPF perfbuffer manager...");
 	perf_buf = perf_buffer__new(bpf_map__fd(skel->maps.perfmap), 8, handle_event, NULL, NULL, NULL);

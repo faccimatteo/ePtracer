@@ -17,11 +17,10 @@ struct {
 
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
-	__uint(max_entries, 10);
+	__uint(max_entries, MAX_PROGRAM_TO_TRACE);
 	__type(key, __u32);
-	__type(value, struct program_info); 
+	__type(value, sizeof(MAX_PROGRAM_STRING_LEN)); 
 } program_map SEC(".maps");
-
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
@@ -30,53 +29,18 @@ struct {
 	__type(value, struct stack_trace_t);
 } stackdata_map SEC(".maps");
 
-/* Allocate per-cpu space twice the needed. For the code below
- *   usize = bpf_get_stack(ctx, raw_data, max_len, BPF_F_USER_STACK);
- *   if (usize < 0)
- *     return 0;
- *   ksize = bpf_get_stack(ctx, raw_data + usize, max_len - usize, 0);
- *
- * If we have value_size = MAX_STACK_RAWTP * sizeof(__u64),
- * verifier will complain that access "raw_data + usize"
- * with size "max_len - usize" may be out of bound.
- * The maximum "raw_data + usize" is "raw_data + max_len"
- * and the maximum "max_len - usize" is "max_len", verifier
- * concludes that the maximum buffer access range is
- * "raw_data[0...max_len * 2 - 1]" and hence reject the program.
- *
- * Doubling the to-be-used max buffer size can fix this verifier
- * issue and avoid complicated C programming massaging.
- * This is an acceptable workaround since there is one entry here.
- */
-// struct {
-// 	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-// 	__uint(max_entries, 1);
-// 	__type(key, __u32);
-// 	__type(value, __u64[2 * MAX_STACK_RAWTP]);
-// } rawdata_map SEC(".maps");
-
-struct raw_syscalls_enter {
-	unsigned short 	common_type;
-	unsigned char 	common_flag;
-	unsigned char   common_preempt_count;
-	int common_pid; // can't actually use it
-
-	long id;
-	unsigned long args[6];	
-};
-
-struct syscalls_enter_excve {
-	unsigned short 	common_type;
-	unsigned char 	common_flag;
-	unsigned char   common_preempt_count;
-	int common_pid; // can't actually use it
-
-	int syscall_nr;
-	const char *filename;
-	const char *const * argv;
-	const char *const * envp;	
-};
-
+static __always_inline __u32 str_equals(const char *s1, const char *s2, __u32 size)
+{
+    int len = 0;
+    unsigned char c1, c2;
+    for (len = 0; len < size; len++) {
+        c1 = *s1++;
+        c2 = *s2++;
+        if (c1 != c2) return c1 < c2 ? -1 : 1;
+        if (!c1) break;
+     }
+     return 0;
+}
 
 SEC("tp/raw_syscalls/sys_enter")
 int get_stacktrace(struct raw_syscalls_enter *ctx)
@@ -85,45 +49,31 @@ int get_stacktrace(struct raw_syscalls_enter *ctx)
  	struct stack_trace_t *data;
  	long usize, ksize;
  	void *raw_data;
- 	__u32 key = 0;
- 	__u32 pid;
- 	__u32 tgid;
- 	__u64 pid_tgid;		
-	char program_name[100];
-	struct program_info *program_to_trace;
-	char *program_to_trace_name;
+ 	__u32 key = 0, pid, tgid, prog_cmp_res;
+	__u64 pid_tgid;
+	char program_name[MAX_PROGRAM_STRING_LEN];
+	const char *program_to_trace;
 
  	data = bpf_map_lookup_elem(&stackdata_map, &key);
- 	if (!data) 
-	{
+ 	if (!data)
  		return 0;
- 	}
  	
-
-	if (bpf_get_current_comm(&program_name, sizeof(program_name)) < 0) 
-	{
+	if (bpf_get_current_comm(&program_name, MAX_PROGRAM_STRING_LEN) < 0) {
 		bpf_printk("[!] Error while getting process name");
 		return 0;
 	}
 
 	program_to_trace = bpf_map_lookup_elem(&program_map, &key);
-	if (!program_to_trace) 
-	{
+	if (!program_to_trace) {
+		bpf_printk("[!] Error while getting program to trace");
 		return 0;
 	}
-
+	
 	// skip process if not present in the map
-	// TODO: try to fix it by providing last len as a multiple of 8 as described in https://man7.org/linux/man-pages/man7/bpf-helpers.7.html
-	bpf_snprintf(program_to_trace_name, program_to_trace->len, "%llu", &program_to_trace->name, program_to_trace->len);
-	bpf_printk("[+] Program name: %s", program_name);
-	bpf_printk("[+] Program to trace: %s", program_to_trace_name);
-	if (!bpf_strncmp(program_name, program_to_trace->len, program_to_trace_name))
-	{
-		return 0;	
-	}
-	
-	
-  	pid_tgid = bpf_get_current_pid_tgid();
+	if (str_equals(program_name, program_to_trace, sizeof(program_to_trace)) != 0)
+		return 0;
+
+	pid_tgid = bpf_get_current_pid_tgid();
   	pid = pid_tgid >> 32; 
   	tgid = pid_tgid & 0xffff;
 		
@@ -133,7 +83,7 @@ int get_stacktrace(struct raw_syscalls_enter *ctx)
 	bpf_printk("	syscall: 	%llu", "");
 	bpf_printk("	syscall id: 	%ld", ctx->id);
  	bpf_printk("	args: 		(%lx, %s, %lx, %lx, %lx, %lx)",  ctx->args[0], ctx->args[1], ctx->args[2], ctx->args[3], ctx->args[4], ctx->args[5]);
- 
+	
  	max_len = MAX_STACK_RAWTP * sizeof(__u64);
  	max_buildid_len = MAX_STACK_RAWTP * sizeof(struct bpf_stack_build_id);
  	data->pid = pid;

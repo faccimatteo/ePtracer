@@ -1,4 +1,4 @@
-get_stacktrace.bpf.o: %.o: %.c
+eptracer.bpf.o: %.o: %.c
 	clang \
 		-target bpf \
 		-I/usr/include/$(shell uname -m)-linux-gnu \
@@ -7,7 +7,7 @@ get_stacktrace.bpf.o: %.o: %.c
 
 # ------------------------------------------------
 
-get_stacktrace.o: %.o: %.c
+eptracer.o: %.o: %.c
 	clang \
 		-Wall \
 		-I . \
