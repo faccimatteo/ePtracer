@@ -68,10 +68,10 @@ int get_stacktrace(struct raw_syscalls_enter *ctx)
 		bpf_printk("[!] Error while getting program to trace");
 		return 0;
 	}
-	
-	// skip process if not present in the map
+
+  // skip process if not present in the map
 	if (str_equals(program_name, program_to_trace, sizeof(program_to_trace)) != 0)
-		return 0;
+       		return 0;
 
 	pid_tgid = bpf_get_current_pid_tgid();
   	pid = pid_tgid >> 32; 
@@ -80,7 +80,6 @@ int get_stacktrace(struct raw_syscalls_enter *ctx)
 	bpf_printk("[+] Program: %s", program_name);
 	bpf_printk("	PID: 		%llu", pid);
 	bpf_printk("	TGID: 		%llu", tgid);
-	bpf_printk("	syscall: 	%llu", "");
 	bpf_printk("	syscall id: 	%ld", ctx->id);
  	bpf_printk("	args: 		(%lx, %s, %lx, %lx, %lx, %lx)",  ctx->args[0], ctx->args[1], ctx->args[2], ctx->args[3], ctx->args[4], ctx->args[5]);
 	

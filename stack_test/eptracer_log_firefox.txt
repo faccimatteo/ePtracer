@@ -1,0 +1,27 @@
+2024-04-01 21:02:12 DEBUG eptracer.c:194: [+] Successfully added logging file eptracer_log_firefox.txt
+2024-04-01 21:02:12 DEBUG eptracer.c:204: [+] PID: 
+2024-04-01 21:02:12 DEBUG eptracer.c:205: [+] Process Name: firefox-esr
+2024-04-01 21:02:12 DEBUG eptracer.c:206: [+] Verbose: 0
+2024-04-01 21:02:12 DEBUG eptracer.c:207: [+] Log file: eptracer_log_firefox.txt
+2024-04-01 21:02:12 DEBUG eptracer.c:209: [+] Loading BPF program into kernel...
+2024-04-01 21:02:12 DEBUG eptracer.c:215: [+] BFP program correctly loaded
+2024-04-01 21:02:12 DEBUG eptracer.c:218: [+] Attaching to BPF program...
+2024-04-01 21:02:12 DEBUG eptracer.c:225: [+] Successfully attached to BFP program
+2024-04-01 21:02:12 DEBUG eptracer.c:227: [+] Setting user program to trace...
+2024-04-01 21:02:12 DEBUG eptracer.c:110: [+] Starting tracing program: firefox-esr
+2024-04-01 21:02:12 DEBUG eptracer.c:235: [+] Successfully set user program to trace
+2024-04-01 21:02:12 DEBUG eptracer.c:238: [+] Creating a BPF perfbuffer manager...
+2024-04-01 21:02:12 DEBUG eptracer.c:245: [+] Perfbuffer successfully created
+2024-04-01 21:02:12 DEBUG eptracer.c:247: [+] Polling events from perfbuffer...
+2024-04-01 21:02:18 INFO  eptracer.c:142: [+] System call detected
+
+2024-04-01 21:02:18 INFO  eptracer.c:143: Time ->  21:02:18
+
+2024-04-01 21:02:18 INFO  eptracer.c:144: PID -> 808352
+
+2024-04-01 21:02:18 INFO  eptracer.c:145: Kernel stack size -> 32
+
+2024-04-01 21:02:18 INFO  eptracer.c:146: User stack size -> 8
+
+2024-04-01 21:02:18 INFO  eptracer.c:154: Dumping user stack stack [8 addresses]
+
