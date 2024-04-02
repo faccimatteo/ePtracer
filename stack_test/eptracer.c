@@ -127,23 +127,28 @@ static void handle_event(void *ctx, int cpu, void *stack_data, __u32 stack_size)
 	char ts[32];
 	time_t t;
 	int i, j, row_size, num_rows = 0;
-	FILE *fd;
+	int fd;
 
 	/* Choosing fd where to log stack events */
 	if (f)
-		fd = f;
+		fd = fileno(f);
 	else 
-		fd = stdout;
+		fd = fileno(stdout);
+
+	if (fd < 0) {
+		log_error("[!] Failed to get file descriptor from stdio stream.");
+		return;
+	}
 
 	time(&t);
 	tm = localtime(&t);
 	strftime(ts, sizeof(ts), "%H:%M:%S", tm);
 
-	log_info("[+] System call detected\n");
-	log_info("Time ->  %-8s\n", ts);
-	log_info("PID -> %d\n", e->pid);
-	log_info("Kernel stack size -> %d\n", e->kern_stack_size);
-	log_info("User stack size -> %d\n", e->user_stack_size);
+	log_info("[+] System call detected");
+	log_info("Time ->  %-8s", ts);
+	log_info("PID -> %d", e->pid);
+	log_info("Kernel stack size -> %d", e->kern_stack_size);
+	log_info("User stack size -> %d", e->user_stack_size);
 
 	/*
 	log_debug("Dumping kernel stack stack [%d]", MAX_STACK_RAWTP);
@@ -151,17 +156,17 @@ static void handle_event(void *ctx, int cpu, void *stack_data, __u32 stack_size)
 		log_info("%llu", e->kern_stack[i]);
 	}*/
 		
-	log_info("Dumping user stack stack [%d addresses]\n", e->user_stack_size);
+	log_info("Dumping user stack stack [%d addresses]", e->user_stack_size);
 
 	num_rows = 5;
 	row_size = e->user_stack_size / num_rows;	
 	for(i = 0; i < num_rows; ++i) {
 		for(j = 0; j < row_size; ++j) {
-			fprintf(f, "%llu ", e->user_stack[(i * row_size) + j]);        
+			dprintf(fd, "%llu ", e->user_stack[(i * row_size) + j]);        
 		}
-		vfprintf(fd, "\n", NULL);
+		dprintf(fd, "\n");
 	}
-	vfprintf(fd, "-----------------------------------------------\n", NULL);
+	dprintf(fd, "-----------------------------------------------\n");
 }
 
 int main(int argc, char **argv) 
