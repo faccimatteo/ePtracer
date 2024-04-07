@@ -1,4 +1,5 @@
 #include <argp.h>
+#include <assert.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <fcntl.h>
@@ -8,15 +9,18 @@
 #include <stdio.h>
 #include <time.h>
 #include <sys/resource.h>
+
 #include "args.h"
 #include "get-stacktrace.h"
 #include "eptracer.skeleton.h"
-#include "./log/src/log.h"
+#include "log.h"
+#include "blazesym.h"
 
 extern int errno;
 static struct arguments args;
 static int log_level = LOG_DEBUG;
 static FILE *f = NULL;
+static struct blaze_symbolizer *symbolizer;
 
 /*
  * libbpf_printf_fn
@@ -118,16 +122,80 @@ static int initialize_array(int fd, char *process_identifier)
 				return bpf_error;
 }
 
-/*
- * */
+static void print_frame(const char *name, uintptr_t input_addr, uintptr_t addr, uint64_t offset, const blaze_symbolize_code_info* code_info)
+{
+    // If we have an input address  we have a new symbol.
+    if (input_addr != 0) {
+      printf("%016lx: %s @ 0x%lx+0x%lx", input_addr, name, addr, offset);
+			if (code_info != NULL && code_info->dir != NULL && code_info->file != NULL) {
+				printf(" %s/%s:%u\n", code_info->dir, code_info->file, code_info->line);
+      } else if (code_info != NULL && code_info->file != NULL) {
+				printf(" %s:%u\n", code_info->file, code_info->line);
+      } else {
+				printf("\n");
+      }
+    } else {
+      printf("%16s  %s", "", name);
+			if (code_info != NULL && code_info->dir != NULL && code_info->file != NULL) {
+				printf("@ %s/%s:%u [inlined]\n", code_info->dir, code_info->file, code_info->line);
+      } else if (code_info != NULL && code_info->file != NULL) {
+				printf("@ %s:%u [inlined]\n", code_info->file, code_info->line);
+      } else {
+				printf("[inlined]\n");
+      }
+    }
+}
+
+static void show_stack_trace(__u64 *stack, int stack_sz, pid_t pid)
+{
+  const struct blaze_symbolize_inlined_fn* inlined;
+	const struct blaze_result *result;
+	const struct blaze_sym *sym;
+	int i, j;
+
+	assert(sizeof(uintptr_t) == sizeof(uint64_t));
+
+	if (pid) {
+		struct blaze_symbolize_src_process src = {
+			.type_size = sizeof(src),
+			.pid = pid,
+		};
+		result = blaze_symbolize_process_abs_addrs(symbolizer, &src, (const uintptr_t *)stack, stack_sz);
+	} else {
+		struct blaze_symbolize_src_kernel src = {
+			.type_size = sizeof(src),
+		};
+		result = blaze_symbolize_kernel_abs_addrs(symbolizer, &src, (const uintptr_t *)stack, stack_sz);
+	}
+
+
+	for (i = 0; i < stack_sz; i++) {
+		if (!result || result->cnt <= i || result->syms[i].name == NULL) {
+			printf("%016llx: <no-symbol>\n", stack[i]);
+			continue;
+		}
+
+    sym = &result->syms[i];
+    print_frame(sym->name, stack[i], sym->addr, sym->offset, &sym->code_info);
+
+    for (j = 0; j < sym->inlined_cnt; j++) {
+      inlined = &sym->inlined[j];
+      print_frame(sym->name, 0, 0, 0, &inlined->code_info);
+    }
+	}
+
+	blaze_result_free(result);
+}
+
 static void handle_event(void *ctx, int cpu, void *stack_data, __u32 stack_size)
 {
-	const struct stack_trace_t *e = stack_data;
+	const struct stack_trace_t *e= stack_data;
 	struct tm *tm;
 	char ts[32];
 	time_t t;
-	int i, j, row_size, num_rows = 0;
-	int fd;
+	int fd = 0;
+
+	if (e->kern_stack_size <= 0 && e->user_stack_size <= 0)
 
 	/* Choosing fd where to log stack events */
 	if (f)
@@ -137,7 +205,6 @@ static void handle_event(void *ctx, int cpu, void *stack_data, __u32 stack_size)
 
 	if (fd < 0) {
 		log_error("[!] Failed to get file descriptor from stdio stream.");
-		return;
 	}
 
 	time(&t);
@@ -150,23 +217,39 @@ static void handle_event(void *ctx, int cpu, void *stack_data, __u32 stack_size)
 	log_info("Kernel stack size -> %d", e->kern_stack_size);
 	log_info("User stack size -> %d", e->user_stack_size);
 
-	/*
-	log_debug("Dumping kernel stack stack [%d]", MAX_STACK_RAWTP);
-	   for(i = 0; i < MAX_STACK_RAWTP; ++i) {
-		log_info("%llu", e->kern_stack[i]);
-	}*/
-		
-	log_info("Dumping user stack stack [%d addresses]", e->user_stack_size);
-
-	num_rows = 5;
-	row_size = e->user_stack_size / num_rows;	
-	for(i = 0; i < num_rows; ++i) {
-		for(j = 0; j < row_size; ++j) {
-			dprintf(fd, "%llu ", e->user_stack[(i * row_size) + j]);        
-		}
-		dprintf(fd, "\n");
+	if (e->kern_stack_size > 0) {
+		printf("Kernel:\n");
+		show_stack_trace(e->kern_stack, e->kern_stack_size / sizeof(__u64), 0);
+	} else {
+		printf("No Kernel Stack\n");
 	}
-	dprintf(fd, "-----------------------------------------------\n");
+
+	if (e->user_stack_size > 0) {
+		printf("Userspace:\n");
+		show_stack_trace(e->user_stack, e->user_stack_size/ sizeof(__u64), e->pid);
+	} else {
+		printf("No Userspace Stack\n");
+	}
+
+	printf("\n");
+
+	// /*
+	// log_debug("Dumping kernel stack stack [%d]", MAX_STACK_RAWTP);
+	//    for(i = 0; i < MAX_STACK_RAWTP; ++i) {
+	// 	log_info("%llu", e->kern_stack[i]);
+	// }*/
+	// 	
+	// log_info("Dumping user stack stack [%d addresses]", e->user_stack_size);
+
+	// num_rows = 5;
+	// row_size = e->user_stack_size / num_rows;	
+	// for(i = 0; i < num_rows; ++i) {
+	// 	for(j = 0; j < row_size; ++j) {
+	// 		dprintf(fd, "%llu ", e->user_stack[(i * row_size) + j]);        
+	// 	}
+	// 	dprintf(fd, "\n");
+	// }
+	// dprintf(fd, "-----------------------------------------------\n");
 }
 
 int main(int argc, char **argv) 

@@ -12,6 +12,7 @@ clang -Wall -O2 -g \
 	libbpf/build/libbpf/libbpf.a \
 	log/src/log.a \
 	argparse/libargparse.a \
+	blazesym/target/debug/libblazesym_c.a \
 	$BLAZESYM_FLAGS \
 	-lelf \
 	-lz \
