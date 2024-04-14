@@ -20,7 +20,7 @@ extern int errno;
 static struct arguments args;
 static int log_level = LOG_DEBUG;
 static FILE *f = NULL;
-static struct blaze_symbolizer *symbolizer;
+static struct blaze_symbolizer *symbolizer = NULL;
 
 /*
  * libbpf_printf_fn
@@ -254,8 +254,8 @@ static void handle_event(void *ctx, int cpu, void *stack_data, __u32 stack_size)
 
 int main(int argc, char **argv) 
 {
-	struct eptracer_bpf *skel;
-	struct perf_buffer *perf_buf;
+	struct eptracer_bpf *skel = NULL;
+	struct perf_buffer *perf_buf = NULL;
 	int err, ret = 0;
 	char* process_id = NULL;
 
@@ -298,7 +298,7 @@ int main(int argc, char **argv)
 	skel = eptracer_bpf__open_and_load();
 	if (!skel) {
 		log_error("[!] Error opening and loading BPF file");
-		return 1;
+		goto cleanup;
 	}
 	log_debug("[+] BFP program correctly loaded");
 
@@ -307,8 +307,7 @@ int main(int argc, char **argv)
 	errno = eptracer_bpf__attach(skel);
 	if (errno) { 
 		log_error( "[!] Error finding BPF program");
-		eptracer_bpf__destroy(skel);
-		return 1;
+		goto cleanup;
 	}
 	log_debug("[+] Successfully attached to BFP program");
 
@@ -317,18 +316,23 @@ int main(int argc, char **argv)
 	if (!process_id || initialize_array(bpf_map__fd(skel->maps.program_map), process_id) < 0)
 	{
 		log_error("[!] Error setting program to trace");
-		eptracer_bpf__destroy(skel);
-		return 1;
+		goto cleanup;
 	}
 	log_debug("[+] Successfully set user program to trace");
 
+	log_debug("[+] Creating blaze symbolizer...");
+	symbolizer = blaze_symbolizer_new();
+	if (!symbolizer) {
+		log_error("Fail to create a symbolizer");
+		goto cleanup;
+	}
+	log_debug("[+] Successfully created blaze symbolizer");
 
 	log_debug("[+] Creating a BPF perfbuffer manager...");
 	perf_buf = perf_buffer__new(bpf_map__fd(skel->maps.perfmap), 8, handle_event, NULL, NULL, NULL);
 	if (!perf_buf) {
 		log_error("[!] Error creating perf buffer");
-		eptracer_bpf__destroy(skel);        
-		return 1;
+		goto cleanup;
 	}
 	log_debug("[+] Perfbuffer successfully created");
 
@@ -338,5 +342,12 @@ int main(int argc, char **argv)
 	perf_buffer__free(perf_buf);
 	eptracer_bpf__destroy(skel);        
 
-	return 0;
+cleanup:
+	if (skel)
+		eptracer_bpf__destroy(skel);        
+	if (symbolizer)
+		blaze_symbolizer_free(symbolizer);
+	if (perf_buf)
+		perf_buffer__free(perf_buf);
+	return 1;
 }
