@@ -6,7 +6,10 @@
 #include <errno.h>
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
+#include <linux/perf_event.h>
 #include <stdio.h>
+#include <sys/syscall.h>
+#include <sys/sysinfo.h>
 #include <time.h>
 #include <sys/resource.h>
 
@@ -20,7 +23,23 @@ extern int errno;
 static struct arguments args;
 static int log_level = LOG_DEBUG;
 static FILE *f = NULL;
-static struct blaze_symbolizer *symbolizer;
+static struct blaze_symbolizer *symbolizer = NULL;
+
+/*
+ * This function is from libbpf, but it is not a public API and can only be
+ * used for demonstration. We can use this here because we statically link
+ * against the libbpf built from submodule during build.
+ */
+extern int parse_cpu_mask_file(const char *fcpu, bool **mask, int *mask_sz);
+
+static long perf_event_open(struct perf_event_attr *hw_event, pid_t pid, int cpu, int group_fd,
+			    unsigned long flags)
+{
+	int ret;
+
+	ret = syscall(__NR_perf_event_open, hw_event, pid, cpu, group_fd, flags);
+	return ret;
+}
 
 /*
  * libbpf_printf_fn
@@ -102,7 +121,7 @@ static char* get_process_identifier(struct arguments *args)
  * */
 static int initialize_array(int fd, char *process_identifier)
 {
-        char name[MAX_PROGRAM_STRING_LEN];
+				char name[MAX_PROGRAM_STRING_LEN];
 				char bpf_error = 0;
 
 				if (strlen(process_identifier) > MAX_PROGRAM_STRING_LEN) {
@@ -196,6 +215,7 @@ static void handle_event(void *ctx, int cpu, void *stack_data, __u32 stack_size)
 	int fd = 0;
 
 	if (e->kern_stack_size <= 0 && e->user_stack_size <= 0)
+		return;
 
 	/* Choosing fd where to log stack events */
 	if (f)
@@ -217,12 +237,12 @@ static void handle_event(void *ctx, int cpu, void *stack_data, __u32 stack_size)
 	log_info("Kernel stack size -> %d", e->kern_stack_size);
 	log_info("User stack size -> %d", e->user_stack_size);
 
-	if (e->kern_stack_size > 0) {
+	/* if (e->kern_stack_size > 0) {
 		printf("Kernel:\n");
 		show_stack_trace(e->kern_stack, e->kern_stack_size / sizeof(__u64), 0);
 	} else {
 		printf("No Kernel Stack\n");
-	}
+	}*/
 
 	if (e->user_stack_size > 0) {
 		printf("Userspace:\n");
@@ -254,20 +274,61 @@ static void handle_event(void *ctx, int cpu, void *stack_data, __u32 stack_size)
 
 int main(int argc, char **argv) 
 {
-	struct eptracer_bpf *skel;
-	struct perf_buffer *perf_buf;
-	int err, ret = 0;
+	const char *online_cpus_file = "/sys/devices/system/cpu/online";
+	struct eptracer_bpf *skel = NULL;
+	struct perf_buffer *perf_buf = NULL;
+	int err, ret = 0, num_cpus = 0, num_online_cpus = 0;
+	int pid = -1, cpu = 0, i = 0;
 	char* process_id = NULL;
+	struct perf_event_attr attr;
+	struct bpf_link **links = NULL;
+	int *pefds = NULL, pefd;
+	bool *online_mask = NULL;
 
 	args.process_pid = "";
 	args.process_name = "";
 	args.verbose = false;
 	args.log_file = "";
+	
+	/* Getting number of online cpus */
+	err = parse_cpu_mask_file(online_cpus_file, &online_mask, &num_online_cpus);
+	if (err) {
+		log_error("[!] Failed to parse cpus number");
+		goto cleanup;	
+	}
+
+	/* Getting number of usable cpus */
+	num_cpus = libbpf_num_possible_cpus();
+	if (num_cpus <= 0) {
+		log_error("[!] Fail to get the number of processors");
+		goto cleanup;
+	}
+	
+	/* Setting up performance monitoring for cpus */
+	pefds = malloc(num_cpus * sizeof(int));
+	for (i = 0; i < num_cpus; i++) {
+		pefds[i] = -1;
+	}
+
+	links = calloc(num_cpus, sizeof(struct bpf_link *));
+
+	memset(&attr, 0, sizeof(attr));
+  //attr.type = PERF_TYPE_HARDWARE;
+	attr.type = PERF_TYPE_SOFTWARE;
+	attr.size = sizeof(attr);
+	// attr.config = PERF_COUNT_HW_CPU_CYCLES;
+	attr.config = PERF_COUNT_SW_CPU_CLOCK;
+	attr.sample_freq = 10000;
+	attr.freq = 1;
+	// Added for VM
+	attr.sample_type = PERF_SAMPLE_TID | PERF_SAMPLE_CALLCHAIN | PERF_SAMPLE_STACK_USER;
 
 	/* Parsing command line arguments */
 	err = argp_parse(&argp, argc, argv, 0, 0, &args);
-  if (err)
-		return err;
+	if (err) {
+		log_error("[!] Error parsing program arguments");
+		goto cleanup;
+	}
 
 	/* Logging to file if requested */
 	if (strlen(args.log_file) != 0) {
@@ -286,7 +347,7 @@ int main(int argc, char **argv)
 	
 	/* Handling libbpf errors and debug info callback */
 	if (libbpf_set_print(libbpf_print_fn) < 0) {
-		log_info("[!] ePtracer has been initialized in non-logging mode.");
+		log_info("[!] Failed to initialize ePtracer in logging mode.");
 	};
 
 	log_debug("[+] PID: %s", args.process_pid);
@@ -298,45 +359,74 @@ int main(int argc, char **argv)
 	skel = eptracer_bpf__open_and_load();
 	if (!skel) {
 		log_error("[!] Error opening and loading BPF file");
-		return 1;
+		goto cleanup;
 	}
 	log_debug("[+] BFP program correctly loaded");
 
+	/* Setting up performance monitoring for cpus */
+	for (cpu = 0; cpu < num_cpus; cpu++) {
+		/* skip offline/not present CPUs */
+		if (cpu >= num_online_cpus || !online_mask[cpu])
+			continue;
+
+		/* Set up performance monitoring on a CPU/Core */
+		pefd = perf_event_open(&attr, pid, cpu, -1, PERF_FLAG_FD_CLOEXEC);
+		if (pefd < 0) {
+			log_error("[!] Fail to set up performance monitor on a CPU/Core");
+			goto cleanup;
+		}
+		pefds[cpu] = pefd;
+
+		/* Attach a BPF program on a CPU */
+		links[cpu] = bpf_program__attach_perf_event(skel->progs.profile, pefd);
+		if (!links[cpu]) {
+			goto cleanup;
+		}
+	}
 
 	log_debug("[+] Attaching to BPF program...");
 	errno = eptracer_bpf__attach(skel);
 	if (errno) { 
 		log_error( "[!] Error finding BPF program");
-		eptracer_bpf__destroy(skel);
-		return 1;
+		goto cleanup;
 	}
 	log_debug("[+] Successfully attached to BFP program");
 
 	log_debug("[+] Setting user program to trace...");
 	process_id = get_process_identifier(&args);
-	if (!process_id || initialize_array(bpf_map__fd(skel->maps.program_map), process_id) < 0)
-	{
+	if (!process_id || initialize_array(bpf_map__fd(skel->maps.program_map), process_id) < 0) {
 		log_error("[!] Error setting program to trace");
-		eptracer_bpf__destroy(skel);
-		return 1;
+		goto cleanup;
 	}
 	log_debug("[+] Successfully set user program to trace");
 
+	// PERF EVENT INITIALIZATION PART
+
+	log_debug("[+] Creating blaze symbolizer...");
+	symbolizer = blaze_symbolizer_new();
+	if (!symbolizer) {
+		log_error("Fail to create a symbolizer");
+		goto cleanup;
+	}
+	log_debug("[+] Successfully created blaze symbolizer");
 
 	log_debug("[+] Creating a BPF perfbuffer manager...");
 	perf_buf = perf_buffer__new(bpf_map__fd(skel->maps.perfmap), 8, handle_event, NULL, NULL, NULL);
 	if (!perf_buf) {
 		log_error("[!] Error creating perf buffer");
-		eptracer_bpf__destroy(skel);        
-		return 1;
+		goto cleanup;
 	}
 	log_debug("[+] Perfbuffer successfully created");
 
 	log_debug("[+] Polling events from perfbuffer...");
 	while ((ret = perf_buffer__poll(perf_buf, 100)) >= 0) {}
 
-	perf_buffer__free(perf_buf);
-	eptracer_bpf__destroy(skel);        
-
-	return 0;
+cleanup:
+	if (skel)
+		eptracer_bpf__destroy(skel);        
+	if (symbolizer)
+		blaze_symbolizer_free(symbolizer);
+	if (perf_buf)
+		perf_buffer__free(perf_buf);
+	return 1;
 }
