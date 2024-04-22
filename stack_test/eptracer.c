@@ -7,11 +7,12 @@
 #include <bpf/bpf.h>
 #include <bpf/libbpf.h>
 #include <linux/perf_event.h>
-#include <stdio.h>
 #include <sys/syscall.h>
 #include <sys/sysinfo.h>
 #include <time.h>
 #include <sys/resource.h>
+#include <stdlib.h>
+#include <pthread.h>
 
 #include "args.h"
 #include "get-stacktrace.h"
@@ -24,6 +25,9 @@ static struct arguments args;
 static int log_level = LOG_DEBUG;
 static FILE *f = NULL;
 static struct blaze_symbolizer *symbolizer = NULL;
+static struct eptracer_bpf *skel = NULL;
+static struct perf_buffer *perf_buf = NULL;
+
 
 /*
  * This function is from libbpf, but it is not a public API and can only be
@@ -77,19 +81,18 @@ static int libbpf_print_fn(enum libbpf_print_level level, const char *format, va
  * Description:
  * Defines the process identifier that will be traced.  
  *
- * Params:
- * struct arguments *args represents 
- *
  * Return:
  * Always use PID first.                      
  * Otherwise if cannot use PID, use process name.                         
  * Return NULL if no PID nor process name are defined.
  * 
  * */
-static char* get_process_identifier(struct arguments *args)
+static char* get_process_identifier()
 {
-	if (!args)
+	if (!args){
+		log_error("[!] Unexpected null program arguments.")
 		return NULL;
+	}
 	if (args->process_pid && strlen(args->process_pid) != 0)
 		return args->process_pid;
 	if (args->process_name && strlen(args->process_name) != 0)
@@ -312,39 +315,22 @@ static void handle_event(void *ctx, int cpu, void *stack_data, __u32 stack_size)
 
 }
 
-int main(int argc, char **argv) 
+void *stack_tracer(void **online_mask_ptr, void *num_online_cpus_ptr);
+
+void *stack_tracer(void **online_mask_ptr, void *num_online_cpus_ptr)
 {
-	const char *online_cpus_file = "/sys/devices/system/cpu/online";
 	bool *online_mask = NULL;
 	int num_online_cpus = 0;
-	struct eptracer_bpf *skel = NULL;
-	struct perf_buffer *perf_buf = NULL;
-	int err, ret = 0, num_cpus = 0;
+	int ret = 0, num_cpus = 0;
 	int pid = -1, cpu = 0, i = 0;
 	char* process_id = NULL;
 	struct perf_event_attr attr;
 	struct bpf_link **links = NULL;
 	int *pefds = NULL, pefd;
 
-	args.process_pid = "";
-	args.process_name = "";
-	args.verbose = false;
-	args.log_file = "";
-	
-	/* Getting number of online cpus */
-	err = parse_cpu_mask_file(online_cpus_file, &online_mask, &num_online_cpus);
-	if (err) {
-		log_error("[!] Failed to parse cpus number");
-		goto cleanup;	
-	}
+	online_mask = (bool*) *online_mask_ptr;
+	num_online_cpus = (int) *num_online_cpus_ptr; 
 
-	/* Getting number of usable cpus */
-	num_cpus = libbpf_num_possible_cpus();
-	if (num_cpus <= 0) {
-		log_error("[!] Fail to get the number of processors");
-		goto cleanup;
-	}
-	
 	/* Setting up performance monitoring for cpus */
 	pefds = malloc(num_cpus * sizeof(int));
 	for (i = 0; i < num_cpus; i++) {
@@ -363,38 +349,6 @@ int main(int argc, char **argv)
 	attr.freq = 1;
 	// Added for VM
 	attr.sample_type = PERF_SAMPLE_TID | PERF_SAMPLE_CALLCHAIN | PERF_SAMPLE_STACK_USER;
-
-	/* Parsing command line arguments */
-	err = argp_parse(&argp, argc, argv, 0, 0, &args);
-	if (err) {
-		log_error("[!] Error parsing program arguments");
-		goto cleanup;
-	}
-
-	/* Logging to file if requested */
-	if (strlen(args.log_file) != 0) {
-		f = fopen(args.log_file, "w+");
-		if (!f) {
-			log_error("[!] Failed to create logging file");
-			return 1;	
-		} else {
-			if (log_add_fp(f, log_level) < 0) {
-				log_error("[!] Failed to add logging file");
-			} else {
-				log_debug("[+] Successfully added logging file %s", args.log_file);
-			}
-		}
-	}
-	
-	/* Handling libbpf errors and debug info callback */
-	if (libbpf_set_print(libbpf_print_fn) < 0) {
-		log_info("[!] Failed to initialize ePtracer in logging mode.");
-	};
-
-	log_debug("[+] PID: %s", args.process_pid);
-	log_debug("[+] Process Name: %s", args.process_name);
-	log_debug("[+] Verbose: %d", args.verbose);
-	log_debug("[+] Log file: %s", args.log_file);
 
 	log_debug("[+] Loading BPF program into kernel...");
 	skel = eptracer_bpf__open_and_load();
@@ -434,7 +388,7 @@ int main(int argc, char **argv)
 	log_debug("[+] Successfully attached to BFP program");
 
 	log_debug("[+] Setting user program to trace...");
-	process_id = get_process_identifier(&args);
+	process_id = get_process_identifier();
 	if (!process_id || initialize_array(bpf_map__fd(skel->maps.program_map), process_id) < 0) {
 		log_error("[!] Error setting program to trace");
 		goto cleanup;
@@ -469,5 +423,71 @@ cleanup:
 		blaze_symbolizer_free(symbolizer);
 	if (perf_buf)
 		perf_buffer__free(perf_buf);
-	return 1;
+
+}
+
+
+int main(int argc, char **argv) 
+{
+	const char *online_cpus_file = "/sys/devices/system/cpu/online";
+	bool *online_mask = NULL;
+	int err = 0, num_cpus = 0, num_online_cpus = 0;
+	pthread_t stack_tracer_thread;
+	args.process_pid = "";
+	args.process_name = "";
+	args.verbose = false;
+	args.log_file = "";
+	
+	/* Getting number of online cpus */
+	err = parse_cpu_mask_file(online_cpus_file, &online_mask, &num_online_cpus);
+	if (err) {
+		log_error("[!] Failed to parse cpus number");
+		return 1;	
+	}
+
+	/* Getting number of usable cpus */
+	num_cpus = libbpf_num_possible_cpus();
+	if (num_cpus <= 0) {
+		log_error("[!] Fail to get the number of processors");
+		return 1;
+	}
+	
+	
+	/* Parsing command line arguments */
+	err = argp_parse(&argp, argc, argv, 0, 0, &args);
+	if (err) {
+		log_error("[!] Error parsing program arguments");
+		return 1;
+	}
+
+	/* Logging to file if requested */
+	if (strlen(args.log_file) != 0) {
+		f = fopen(args.log_file, "w+");
+		if (!f) {
+			log_error("[!] Failed to create logging file");
+			return 1;	
+		} else {
+			if (log_add_fp(f, log_level) < 0) {
+				log_error("[!] Failed to add logging file");
+			} else {
+				log_debug("[+] Successfully added logging file %s", args.log_file);
+			}
+		}
+	}
+	
+	/* Handling libbpf errors and debug info callback */
+	if (libbpf_set_print(libbpf_print_fn) < 0) {
+		log_info("[!] Failed to initialize ePtracer in logging mode.");
+	};
+
+	log_debug("[+] PID: %s", args.process_pid);
+	log_debug("[+] Process Name: %s", args.process_name);
+	log_debug("[+] Verbose: %d", args.verbose);
+	log_debug("[+] Log file: %s", args.log_file);
+
+	pthread_create(&stack_tracer_thread, NULL, stack_tracer, 
+			(void*) &online_mask,
+			(void*) &num_online_cpus);	
+	pthread_join(stack_tracer_thread, NULL);
+
 }
