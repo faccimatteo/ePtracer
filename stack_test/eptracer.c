@@ -321,6 +321,9 @@ int main(int argc, char **argv)
 	struct perf_buffer *perf_buf = NULL;
 	int err, ret = 0, num_cpus = 0;
 	int pid = -1, cpu = 0, i = 0;
+	struct eptracer_bpf *skel = NULL;
+	struct perf_buffer *perf_buf = NULL;
+	int err, ret = 0;
 	char* process_id = NULL;
 	struct perf_event_attr attr;
 	struct bpf_link **links = NULL;
