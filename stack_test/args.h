@@ -26,11 +26,11 @@ static const char argp_program_doc[] = "\n\
 				"\n"
                                 "USAGE: ./eptracer [-p <process_name>] [-P <pid>] [-v]\n";
 
-static const struct argp_option opts[] = {
-        { "verbose", 												'v', 0, 		0, "Verbose debug output" },
-				{ "name of the process to track", 	'p', "NAME",	0, "Process name you want to analyze" },
-				{ "pid of the process to track", 		'P', "PID",		0, "PID you want to analyze" },
-				{ "logging file", 									'f', "FILE", 	0, "Logging to file instead of standard output"},
+static const struct argp_option argp_opts[] = {
+        { "verbose", 												'v', 0, 		0, "Verbose debug output", 0 },
+				{ "name of the process to track", 	'p', "NAME",	0, "Process name you want to analyze", 0 },
+				{ "pid of the process to track", 		'P', "PID",		0, "PID you want to analyze", 0 },
+				{ "logging file", 									'f', "FILE", 	0, "Logging to file instead of standard output", 0 },
         {},
 };
 
@@ -44,7 +44,7 @@ struct arguments
 
 static error_t parse_arg(int key, char *arg, struct argp_state *state)
 {
-	struct arguments *args = state->input;
+	 struct arguments *args = state->input;
 	
   switch (key) 
 	{
@@ -75,7 +75,7 @@ static error_t parse_arg(int key, char *arg, struct argp_state *state)
 
 
 static struct argp argp = {
-        .options = opts,
+        .options = argp_opts,
         .parser = parse_arg,
         .doc = argp_program_doc,
 };

@@ -3,11 +3,13 @@
 BLAZESYM_FLAGS="-lrt -ldl -lpthread -lm"
 
 bpftool gen skeleton eptracer.bpf.o > eptracer.skeleton.h
-clang -Wall -O2 -g \
+clang -Wall -Wextra -Wshadow \
+	-O2 -g3 \
 	-I . \
 	-c eptracer.c \
 	-o eptracer.o
-clang -Wall -O2 -g \
+clang -Wall -Wextra -Wshadow \
+	-O2 -g3 \
 	eptracer.o \
 	libbpf/build/libbpf/libbpf.a \
 	log/src/log.a \
