@@ -35,7 +35,7 @@ static __always_inline __u32 str_equals(const char *s1, const char *s2, __u32 si
 {
     int len = 0;
     unsigned char c1, c2;
-    for (len = 0; len < size; len++) {
+    for (len = 0; len < size; ++len) {
         c1 = *s1++;
         c2 = *s2++;
         if (c1 != c2) return c1 < c2 ? -1 : 1;
@@ -54,15 +54,15 @@ int profile(void *ctx)
     long usize, ksize = 0;
     void *raw_data;
     char program_name[MAX_PROGRAM_STRING_LEN];
-	  const char *program_to_trace;
+	const char *program_to_trace;
     unsigned long pid_to_trace = 0;
     __u32 key = 0, pid = 0, tgid = 0, prog_cmp_res = 0, processed_char = 0;
     __u64 pid_tgid = 0;
  
 
- 	  data = bpf_map_lookup_elem(&stackdata_map, &key);
- 	  if (!data)
- 		    return 0;
+ 	data = bpf_map_lookup_elem(&stackdata_map, &key);
+ 	if (!data)
+		return 0;
  	
     if (bpf_get_current_comm(&program_name, MAX_PROGRAM_STRING_LEN) < 0) {
         bpf_printk("[!] Error while getting process name");
@@ -108,33 +108,24 @@ int profile(void *ctx)
     max_len = MAX_STACK_RAWTP * sizeof(__u64);
     max_buildid_len = MAX_STACK_RAWTP * sizeof(struct bpf_stack_build_id);
     data->pid = pid;
-    data->kern_stack_size = bpf_get_stack(ctx, data->kern_stack,
-                  max_len, 0);
-    data->user_stack_size = bpf_get_stack(ctx, data->user_stack, max_len,
+    data->kern_stack_size = bpf_get_stack(
+				ctx, 
+				data->kern_stack,
+                max_len, 
+				0);
+    data->user_stack_size = bpf_get_stack(
+				ctx, 
+				data->user_stack,
+				max_len,
                 BPF_F_USER_STACK);
     data->user_stack_buildid_size = bpf_get_stack(
-      ctx, data->user_stack_buildid, max_buildid_len,
-      BPF_F_USER_STACK | BPF_F_USER_BUILD_ID);
+				ctx, 
+				data->user_stack_buildid, 
+				max_buildid_len,
+				BPF_F_USER_STACK | BPF_F_USER_BUILD_ID);
     bpf_perf_event_output(ctx, &perfmap, 0, data, sizeof(*data));
  
-    /* write both kernel and user stacks to the same buffer */
-    // raw_data = bpf_map_lookup_elem(&rawdata_map, &key);
-    // if (!raw_data)
-    // 	return 0;
- 
-    // usize = bpf_get_stack(ctx, raw_data, max_len, BPF_F_USER_STACK);
-    // if (usize < 0)
-    // 	return 0;
- 
-    // ksize = bpf_get_stack(ctx, raw_data + usize, max_len - usize, 0);
-    // if (ksize < 0)
-    // 	return 0;
- 
-    // total_size = usize + ksize;
-    // if (total_size > 0 && total_size <= max_len)
-    // 	bpf_perf_event_output(ctx, &perfmap, 0, raw_data, total_size);
- 
-      return 0;
+    return 0;
  }
 
 char _license[] SEC("license") = "GPL";

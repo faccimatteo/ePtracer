@@ -48,20 +48,20 @@ static long perf_event_open(struct perf_event_attr *hw_event, pid_t pid, int cpu
  * Callback function invoked every time a log event is produced by libbpf.
  *
  * Params:
- * enum libbpf_print_level level: logging level used by libbpf. Checks https://elixir.bootlin.com/linux/latest/source/tools/lib/bpf/libbpf.h#L90 for more details. 
+ * enum libbpf_print_level level: logging level used by libbpf. 
+ * Checks https://elixir.bootlin.com/linux/latest/source/tools/lib/bpf/libbpf.h#L90 for more details. 
  * const char *format: format needed to libbpf to produce our logs. 
  * va_list fn_args: arguments needed to libbpf to produce our logs.
  *
  * Return:
- * Number of bytes written to log file descriptor if verbose mode is activated, 
- * -1 otherwise.
+ * Number of bytes written to log file descriptor if verbose mode is activated, -1 otherwise.
  * */
 static int libbpf_print_fn(enum libbpf_print_level level, const char *format, va_list fn_args)
 {
 
 	if (args.verbose) {
 		if (args.log_file && strlen(args.log_file) != 0) {
-						log_info("[+] Logging ePtracer in: %s", args.log_file);
+			log_info("[+] Logging ePtracer in: %s", args.log_file);
 			return fprintf(f, format, fn_args);
 		} else {
 			return fprintf(stdout, format, fn_args);
@@ -76,7 +76,7 @@ static int libbpf_print_fn(enum libbpf_print_level level, const char *format, va
  *
  * Description:
  * Defines the process identifier that will be traced.  
-  *
+ *
  * Params:
  * struct arguments *args represents 
  *
@@ -88,13 +88,13 @@ static int libbpf_print_fn(enum libbpf_print_level level, const char *format, va
  * */
 static char* get_process_identifier(struct arguments *args)
 {
-		if (!args)
-			return NULL;
-		if (args->process_pid && strlen(args->process_pid) != 0)
-			return args->process_pid;
-		if (args->process_name && strlen(args->process_name) != 0)
-			return args->process_name;
+	if (!args)
 		return NULL;
+	if (args->process_pid && strlen(args->process_pid) != 0)
+		return args->process_pid;
+	if (args->process_name && strlen(args->process_name) != 0)
+		return args->process_name;
+	return NULL;
 }
 
 /* 
@@ -112,62 +112,98 @@ static char* get_process_identifier(struct arguments *args)
  *
  * Return:
  * 0 on success, or a negative error in case of failure. 
- * For more details about bpf_map_update_elem error checks https://man7.org/linux/man-pages/man7/bpf-helpers.7.html#bpf_map_update_elem 
+ * For more details about bpf_map_update_elem error checks 
+ * https://man7.org/linux/man-pages/man7/bpf-helpers.7.html#bpf_map_update_elem 
  *
  * PLANNED CHANGES:
  * By now, only one program is passed from program arguments.
  * Instead, the idea is to pass a list of process_identifier with a number of program 
  * to trace < MAX_PROGRAM_TO_TRACE.
+ *
  * */
 static int initialize_array(int fd, char *process_identifier)
 {
-				char name[MAX_PROGRAM_STRING_LEN];
-				char bpf_error = 0;
+	char name[MAX_PROGRAM_STRING_LEN];
+	char bpf_error = 0;
 
-				if (strlen(process_identifier) > MAX_PROGRAM_STRING_LEN) {
-						log_error("[!] Specified program identifier exceeds program max length.");
-						return -1;
-				}
+	if (strlen(process_identifier) > MAX_PROGRAM_STRING_LEN) {
+		log_error("[!] Specified program identifier exceeds program max length.");
+		return -1;
+	}
 
-				strncpy(name, process_identifier, MAX_PROGRAM_STRING_LEN);
-        log_debug("[+] Starting tracing program: %s", name);
-        __u32 i = 0;
+	strncpy(name, process_identifier, MAX_PROGRAM_STRING_LEN);
+    log_debug("[+] Starting tracing program: %s", name);
+	__u32 i = 0;
 
-				/* Setting program to trace for all the CPUs */
-        bpf_error = bpf_map_update_elem(fd, &i, &name, BPF_ANY);
-				if (bpf_error < 0)
-        	log_error("[!] Failed to update BPF map with program name %s: error %d", name, bpf_error);
+	/* Setting program to trace for all the CPUs */
+    bpf_error = bpf_map_update_elem(fd, &i, &name, BPF_ANY);
+	if (bpf_error < 0)
+		log_error("[!] Failed to update BPF map with program name %s: error %d", name, bpf_error);
 
-				return bpf_error;
+	return bpf_error;
 }
 
-static void print_frame(const char *name, uintptr_t input_addr, uintptr_t addr, uint64_t offset, const blaze_symbolize_code_info* code_info)
+/*
+ * print_frame
+ *
+ * Description:
+ * Prints user or kernel stack frame single reference.
+ *
+ * Params:
+ * const char *name: function's name.
+ * uintptr_t input_addr: 
+ * uintptr_t addr: 
+ * uint64_t offset: offset from stack base address.
+ * const blaze_symbolize_code_info* code_info: information obtained from blaze related 
+ * to the stack address.
+ */
+static void print_frame(
+	const char *name, 
+	uintptr_t input_addr,
+	uintptr_t addr,
+	uint64_t offset,
+	const blaze_symbolize_code_info* code_info
+)
 {
-    // If we have an input address  we have a new symbol.
-    if (input_addr != 0) {
-      printf("%016lx: %s @ 0x%lx+0x%lx", input_addr, name, addr, offset);
-			if (code_info != NULL && code_info->dir != NULL && code_info->file != NULL) {
-				printf(" %s/%s:%u\n", code_info->dir, code_info->file, code_info->line);
-      } else if (code_info != NULL && code_info->file != NULL) {
-				printf(" %s:%u\n", code_info->file, code_info->line);
-      } else {
-				printf("\n");
-      }
+    /* If an input address is specified, we have a new symbol we can print. */
+	if (input_addr != 0) {
+		log_info("%016lx: %s @ 0x%lx+0x%lx", input_addr, name, addr, offset);
+		/* Log stack tracing information if */
+		if (code_info != NULL && code_info->dir != NULL && code_info->file != NULL) {
+			log_info(" %s/%s:%u", code_info->dir, code_info->file, code_info->line);
+		} else if (code_info != NULL && code_info->file != NULL) {
+			log_info(" %s:%u", code_info->file, code_info->line);
+		} else {
+			log_info("");
+		}
     } else {
-      printf("%16s  %s", "", name);
-			if (code_info != NULL && code_info->dir != NULL && code_info->file != NULL) {
-				printf("@ %s/%s:%u [inlined]\n", code_info->dir, code_info->file, code_info->line);
-      } else if (code_info != NULL && code_info->file != NULL) {
-				printf("@ %s:%u [inlined]\n", code_info->file, code_info->line);
-      } else {
-				printf("[inlined]\n");
-      }
+		printf("%16s  %s", "", name);
+
+		if (code_info != NULL && code_info->dir != NULL && code_info->file != NULL) {
+			log_info("@ %s/%s:%u [inlined]", code_info->dir, code_info->file, code_info->line);
+		} else if (code_info != NULL && code_info->file != NULL) {
+			log_info("@ %s:%u [inlined]", code_info->file, code_info->line);
+		} else {
+			log_info("[inlined]");
+		}
     }
 }
 
+/*
+ * show_stack_trace
+*
+ * Description:
+ * Recover information from stack addresses and output formatted symbolic stack frames.
+ *
+ * Params:
+ * __u64 *stack: stack pointer used to recover stack data.
+ * int stack_sz: stack size.
+ * pid_t pid: process id. 
+ *
+ * */
 static void show_stack_trace(__u64 *stack, int stack_sz, pid_t pid)
 {
-  const struct blaze_symbolize_inlined_fn* inlined;
+	const struct blaze_symbolize_inlined_fn* inlined;
 	const struct blaze_result *result;
 	const struct blaze_sym *sym;
 	int i, j;
@@ -190,22 +226,38 @@ static void show_stack_trace(__u64 *stack, int stack_sz, pid_t pid)
 
 	for (i = 0; i < stack_sz; i++) {
 		if (!result || result->cnt <= i || result->syms[i].name == NULL) {
-			printf("%016llx: <no-symbol>\n", stack[i]);
+			log_info("%016llx: <no-symbol>", stack[i]);
 			continue;
 		}
 
-    sym = &result->syms[i];
-    print_frame(sym->name, stack[i], sym->addr, sym->offset, &sym->code_info);
+		sym = &result->syms[i];
+		print_frame(sym->name, stack[i], sym->addr, sym->offset, &sym->code_info);
 
-    for (j = 0; j < sym->inlined_cnt; j++) {
-      inlined = &sym->inlined[j];
-      print_frame(sym->name, 0, 0, 0, &inlined->code_info);
-    }
+		for (j = 0; j < sym->inlined_cnt; j++) {
+		  inlined = &sym->inlined[j];
+		  print_frame(sym->name, 0, 0, 0, &inlined->code_info);
+		}
 	}
 
 	blaze_result_free(result);
 }
 
+/*
+ * handle_event
+ *
+ * Description:
+ * This "perf event" event handler extract stack frames (kernel and user) from kernel 
+ * perf event and performs kernel and userspace stack tracing. 
+ * Based on how ePtracer has been configured, output will be redirected into stdout or 
+ * external logging file. 
+ * 
+ * Params:
+ * void *ctx: perf event's context.
+ * int cpu: cpu id processing the event.
+ * void *stack_data: pid stack information containing addresses and size.
+ * __u32 stack_size: stack size.
+ *
+ * */
 static void handle_event(void *ctx, int cpu, void *stack_data, __u32 stack_size)
 {
 	const struct stack_trace_t *e= stack_data;
@@ -214,6 +266,7 @@ static void handle_event(void *ctx, int cpu, void *stack_data, __u32 stack_size)
 	time_t t;
 	int fd = 0;
 
+	/* Can't log with empty stacks */
 	if (e->kern_stack_size <= 0 && e->user_stack_size <= 0)
 		return;
 
@@ -231,59 +284,47 @@ static void handle_event(void *ctx, int cpu, void *stack_data, __u32 stack_size)
 	tm = localtime(&t);
 	strftime(ts, sizeof(ts), "%H:%M:%S", tm);
 
-	log_info("[+] System call detected");
+	log_info("--------------------------------------------------------------");
+	log_info("[+] Perf event");
 	log_info("Time ->  %-8s", ts);
 	log_info("PID -> %d", e->pid);
 	log_info("Kernel stack size -> %d", e->kern_stack_size);
 	log_info("User stack size -> %d", e->user_stack_size);
-
-	/* if (e->kern_stack_size > 0) {
-		printf("Kernel:\n");
+	
+	/* Showing kernel stack events if any */
+	if (e->kern_stack_size > 0) {
+		log_info("Kernel:");
 		show_stack_trace(e->kern_stack, e->kern_stack_size / sizeof(__u64), 0);
 	} else {
-		printf("No Kernel Stack\n");
-	}*/
-
-	if (e->user_stack_size > 0) {
-		printf("Userspace:\n");
-		show_stack_trace(e->user_stack, e->user_stack_size/ sizeof(__u64), e->pid);
-	} else {
-		printf("No Userspace Stack\n");
+		log_info("No Kernel Stack");
 	}
 
-	printf("\n");
+	/* Showing user stack events if any */
+	if (e->user_stack_size > 0) {
+		log_info("Userspace:");
+		show_stack_trace(e->user_stack, e->user_stack_size/ sizeof(__u64), e->pid);
+	} else {
+		log_info("No Userspace Stack");
+	}
+	log_info("--------------------------------------------------------------");
+	/* Keep events spaced by one line */
+	log_info("");
 
-	// /*
-	// log_debug("Dumping kernel stack stack [%d]", MAX_STACK_RAWTP);
-	//    for(i = 0; i < MAX_STACK_RAWTP; ++i) {
-	// 	log_info("%llu", e->kern_stack[i]);
-	// }*/
-	// 	
-	// log_info("Dumping user stack stack [%d addresses]", e->user_stack_size);
-
-	// num_rows = 5;
-	// row_size = e->user_stack_size / num_rows;	
-	// for(i = 0; i < num_rows; ++i) {
-	// 	for(j = 0; j < row_size; ++j) {
-	// 		dprintf(fd, "%llu ", e->user_stack[(i * row_size) + j]);        
-	// 	}
-	// 	dprintf(fd, "\n");
-	// }
-	// dprintf(fd, "-----------------------------------------------\n");
 }
 
 int main(int argc, char **argv) 
 {
 	const char *online_cpus_file = "/sys/devices/system/cpu/online";
+	bool *online_mask = NULL;
+	int num_online_cpus = 0;
 	struct eptracer_bpf *skel = NULL;
 	struct perf_buffer *perf_buf = NULL;
-	int err, ret = 0, num_cpus = 0, num_online_cpus = 0;
+	int err, ret = 0, num_cpus = 0;
 	int pid = -1, cpu = 0, i = 0;
 	char* process_id = NULL;
 	struct perf_event_attr attr;
 	struct bpf_link **links = NULL;
 	int *pefds = NULL, pefd;
-	bool *online_mask = NULL;
 
 	args.process_pid = "";
 	args.process_name = "";
@@ -313,7 +354,7 @@ int main(int argc, char **argv)
 	links = calloc(num_cpus, sizeof(struct bpf_link *));
 
 	memset(&attr, 0, sizeof(attr));
-  //attr.type = PERF_TYPE_HARDWARE;
+	//attr.type = PERF_TYPE_HARDWARE;
 	attr.type = PERF_TYPE_SOFTWARE;
 	attr.size = sizeof(attr);
 	// attr.config = PERF_COUNT_HW_CPU_CYCLES;
