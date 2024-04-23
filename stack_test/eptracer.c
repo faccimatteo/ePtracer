@@ -29,6 +29,14 @@ static struct eptracer_bpf *skel = NULL;
 static struct perf_buffer *perf_buf = NULL;
 
 
+/* structure to send argument to stack_tracer thread */
+struct stack_tracer_args 
+{
+	bool *online_mask;
+	int num_cpus;
+	int num_online_cpus;
+};
+
 /*
  * This function is from libbpf, but it is not a public API and can only be
  * used for demonstration. We can use this here because we statically link
@@ -88,15 +96,16 @@ static int libbpf_print_fn(enum libbpf_print_level level, const char *format, va
  * 
  * */
 static char* get_process_identifier()
-{
-	if (!args){
-		log_error("[!] Unexpected null program arguments.")
+{	
+	struct arguments *program_arguments = &args;
+	if (!program_arguments){
+		log_error("[!] Unexpected null program arguments.");
 		return NULL;
 	}
-	if (args->process_pid && strlen(args->process_pid) != 0)
-		return args->process_pid;
-	if (args->process_name && strlen(args->process_name) != 0)
-		return args->process_name;
+	if (program_arguments->process_pid && strlen(program_arguments->process_pid) != 0)
+		return program_arguments ->process_pid;
+	if (program_arguments->process_name && strlen(program_arguments->process_name) != 0)
+		return program_arguments->process_name;
 	return NULL;
 }
 
@@ -315,9 +324,9 @@ static void handle_event(void *ctx, int cpu, void *stack_data, __u32 stack_size)
 
 }
 
-void *stack_tracer(void **online_mask_ptr, void *num_online_cpus_ptr);
+void *stack_tracer(void *stack_tracer_arguments);
 
-void *stack_tracer(void **online_mask_ptr, void *num_online_cpus_ptr)
+void *stack_tracer(void *stack_tracer_arguments)
 {
 	bool *online_mask = NULL;
 	int num_online_cpus = 0;
@@ -328,8 +337,10 @@ void *stack_tracer(void **online_mask_ptr, void *num_online_cpus_ptr)
 	struct bpf_link **links = NULL;
 	int *pefds = NULL, pefd;
 
-	online_mask = (bool*) *online_mask_ptr;
-	num_online_cpus = (int) *num_online_cpus_ptr; 
+	/* Getting necessary params */
+	online_mask = ((struct stack_tracer_args*) stack_tracer_arguments)->online_mask;
+	num_cpus = ((struct stack_tracer_args*) stack_tracer_arguments)->num_cpus;
+	num_online_cpus = ((struct stack_tracer_args*) stack_tracer_arguments)->num_online_cpus;
 
 	/* Setting up performance monitoring for cpus */
 	pefds = malloc(num_cpus * sizeof(int));
@@ -338,7 +349,7 @@ void *stack_tracer(void **online_mask_ptr, void *num_online_cpus_ptr)
 	}
 
 	links = calloc(num_cpus, sizeof(struct bpf_link *));
-
+	
 	memset(&attr, 0, sizeof(attr));
 	//attr.type = PERF_TYPE_HARDWARE;
 	attr.type = PERF_TYPE_SOFTWARE;
@@ -363,7 +374,7 @@ void *stack_tracer(void **online_mask_ptr, void *num_online_cpus_ptr)
 		/* skip offline/not present CPUs */
 		if (cpu >= num_online_cpus || !online_mask[cpu])
 			continue;
-
+		
 		/* Set up performance monitoring on a CPU/Core */
 		pefd = perf_event_open(&attr, pid, cpu, -1, PERF_FLAG_FD_CLOEXEC);
 		if (pefd < 0) {
@@ -432,7 +443,9 @@ int main(int argc, char **argv)
 	const char *online_cpus_file = "/sys/devices/system/cpu/online";
 	bool *online_mask = NULL;
 	int err = 0, num_cpus = 0, num_online_cpus = 0;
+	struct stack_tracer_args stack_thread_arguments;
 	pthread_t stack_tracer_thread;
+
 	args.process_pid = "";
 	args.process_name = "";
 	args.verbose = false;
@@ -452,7 +465,6 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	
-	
 	/* Parsing command line arguments */
 	err = argp_parse(&argp, argc, argv, 0, 0, &args);
 	if (err) {
@@ -469,6 +481,7 @@ int main(int argc, char **argv)
 		} else {
 			if (log_add_fp(f, log_level) < 0) {
 				log_error("[!] Failed to add logging file");
+				return 1;
 			} else {
 				log_debug("[+] Successfully added logging file %s", args.log_file);
 			}
@@ -484,10 +497,15 @@ int main(int argc, char **argv)
 	log_debug("[+] Process Name: %s", args.process_name);
 	log_debug("[+] Verbose: %d", args.verbose);
 	log_debug("[+] Log file: %s", args.log_file);
+	
+	stack_thread_arguments.online_mask = online_mask;
+	stack_thread_arguments.num_cpus = num_cpus;
+	stack_thread_arguments.num_online_cpus = num_online_cpus;
 
-	pthread_create(&stack_tracer_thread, NULL, stack_tracer, 
-			(void*) &online_mask,
-			(void*) &num_online_cpus);	
+	if (pthread_create(&stack_tracer_thread, NULL, stack_tracer, (void*) &stack_thread_arguments)) {
+		log_error("[!] Failed to create stack tracer thread.");
+		return 1;
+	}
 	pthread_join(stack_tracer_thread, NULL);
-
+	return 0;
 }
