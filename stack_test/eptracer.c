@@ -16,10 +16,10 @@
 
 #include "lib/args.h"
 #include "lib/blazesym.h"
-#include "lib/eptracer.skeleton.h"
 #include "lib/log.h"
-#include "lib/stack_tracing.h"
-#include "lib/syscall_tracing.h"
+#include "lib/bpf/eptracer.skeleton.h"
+#include "lib/bpf/stack_tracing.h"
+#include "lib/bpf/syscall_tracing.h"
 
 extern int errno;
 static struct arguments args;

@@ -2,7 +2,7 @@
 # flags needed by blazesym
 BLAZESYM_FLAGS="-lrt -ldl -lpthread -lm"
 
-bpftool gen skeleton eptracer.bpf.o > eptracer.skeleton.h
+bpftool gen skeleton eptracer.bpf.o > ./lib/bpf/eptracer.skeleton.h
 clang -Wall -Wextra -Wshadow \
 	-O2 -g3 \
 	-I . \
