@@ -8,7 +8,8 @@
 #include <string.h>
 #include <stdlib.h>
 
-#include "get-stacktrace.h"
+#include "lib/stack_tracing.h"
+#include "lib/syscall_tracing.h"
 
 struct {
 	__uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);

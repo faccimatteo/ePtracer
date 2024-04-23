@@ -1,3 +1,4 @@
 ./stack_test/eptracer
 ./stack_test/eptracer.o
 ./stack_test/eptracer.bpf.o
+./stack_test/eptracer.skeleton.h
