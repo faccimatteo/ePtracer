@@ -18,8 +18,8 @@
 #include "lib/bpf/blazesym.h"
 #include "lib/log.h"
 #include "lib/bpf/eptracer.skeleton.h"
-#include "stack_tracing.h"
-#include "syscall_tracing.h"
+#include "lib/stack_tracing.h"
+#include "lib/syscall_tracing.h"
 
 extern int errno;
 static struct arguments args;
