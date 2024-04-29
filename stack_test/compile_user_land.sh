@@ -18,7 +18,7 @@ cd $ROOT_DIR
 
 #Libbpf
 cd libbpf/src
-mkdir build root
+mkdir -p build root
 BUILD_STATIC_ONLY=y OBJDIR=build DESTDIR=root make install
 cd $ROOT_DIR
 
@@ -28,7 +28,7 @@ make
 cd $ROOT_DIR
 
 # Log
-clang -shared -undefined dynamic_lookup -o log/src/log.so log/src/log.c
+clang -shared -o log/src/log.so log/src/log.c
 
 clang -Wall -Wextra -Wshadow \
 	-O2 -g3 \
@@ -42,7 +42,8 @@ clang -Wall -Wextra -Wshadow \
 	libbpf/src/build/libbpf.a \
 	argparse/libargparse.so \
 	log/src/log.so \
-	blazesym/target/debug/libblazesym_c.so \
+	blazesym/target/debug/libblazesym_c.a \
+	$BLAZESYM_FLAGS \
 	-lelf \
 	-lz \
 	-o eptracer

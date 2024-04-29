@@ -14,12 +14,12 @@
 #include <stdlib.h>
 #include <pthread.h>
 
-#include "./lib/args.h"
-#include "./lib/bpf/blazesym.h"
-#include "./lib/log.h"
-#include "./lib/bpf/eptracer.skeleton.h"
-#include "./stack_tracing.h"
-#include "./syscall_tracing.h"
+#include "lib/args.h"
+#include "lib/bpf/blazesym.h"
+#include "lib/log.h"
+#include "lib/bpf/eptracer.skeleton.h"
+#include "stack_tracing.h"
+#include "syscall_tracing.h"
 
 extern int errno;
 static struct arguments args;
@@ -72,15 +72,16 @@ static long perf_event_open(struct perf_event_attr *hw_event, pid_t pid, int cpu
 static int libbpf_print_fn(enum libbpf_print_level level, const char *format, va_list fn_args)
 {
 
-	if (args.verbose) {
-		if (args.log_file && strlen(args.log_file) != 0) {
-			log_info("[+] Logging ePtracer in: %s", args.log_file);
-			return fprintf(f, format, fn_args);
-		} else {
-			return fprintf(stdout, format, fn_args);
-		}
-	}	
+	/* Logs non-debug info if verbose is not requested */
+	if (level > LIBBPF_INFO) {
+		return 0;
+	}
 
+	if (args.log_file && strlen(args.log_file) != 0) {
+			return fprintf(f, format, fn_args);
+	} else {
+		return fprintf(stdout, format, fn_args);
+	}
 	return -1;
 }
 
@@ -204,7 +205,7 @@ static void print_frame(
 
 /*
  * show_stack_trace
-*
+ *
  * Description:
  * Recover information from stack addresses and output formatted symbolic stack frames.
  *
@@ -214,12 +215,12 @@ static void print_frame(
  * pid_t pid: process id. 
  *
  * */
-static void show_stack_trace(__u64 *stack, int stack_sz, pid_t pid)
+static void show_stack_trace(const __u64 *stack, unsigned long stack_sz, pid_t pid)
 {
 	const struct blaze_symbolize_inlined_fn* inlined;
 	const struct blaze_result *result;
 	const struct blaze_sym *sym;
-	int i, j;
+	unsigned long i, j;
 
 	assert(sizeof(uintptr_t) == sizeof(uint64_t));
 
@@ -273,14 +274,14 @@ static void show_stack_trace(__u64 *stack, int stack_sz, pid_t pid)
  * */
 static void handle_event(void *ctx, int cpu, void *stack_data, __u32 stack_size)
 {
-	const struct stack_trace_t *e= stack_data;
+	const struct stack_trace_t *e = stack_data;
 	struct tm *tm;
 	char ts[32];
 	time_t t;
 	int fd = 0;
 
-	/* Can't log with empty stacks */
-	if (e->kern_stack_size <= 0 && e->user_stack_size <= 0)
+  /* Can't log with empty stacks */
+	if (e->kern_stack_size <= 0 && e->user_stack_size)
 		return;
 
 	/* Choosing fd where to log stack events */
@@ -292,7 +293,6 @@ static void handle_event(void *ctx, int cpu, void *stack_data, __u32 stack_size)
 	if (fd < 0) {
 		log_error("[!] Failed to get file descriptor from stdio stream.");
 	}
-
 	time(&t);
 	tm = localtime(&t);
 	strftime(ts, sizeof(ts), "%H:%M:%S", tm);
@@ -301,6 +301,7 @@ static void handle_event(void *ctx, int cpu, void *stack_data, __u32 stack_size)
 	log_info("[+] Perf event");
 	log_info("Time ->  %-8s", ts);
 	log_info("PID -> %d", e->pid);
+	log_info("CPU -> %d", cpu);
 	log_info("Kernel stack size -> %d", e->kern_stack_size);
 	log_info("User stack size -> %d", e->user_stack_size);
 	
@@ -315,7 +316,7 @@ static void handle_event(void *ctx, int cpu, void *stack_data, __u32 stack_size)
 	/* Showing user stack events if any */
 	if (e->user_stack_size > 0) {
 		log_info("Userspace:");
-		show_stack_trace(e->user_stack, e->user_stack_size/ sizeof(__u64), e->pid);
+		show_stack_trace(e->user_stack, e->user_stack_size / sizeof(__u64), e->pid);
 	} else {
 		log_info("No Userspace Stack");
 	}
@@ -435,7 +436,7 @@ cleanup:
 		blaze_symbolizer_free(symbolizer);
 	if (perf_buf)
 		perf_buffer__free(perf_buf);
-
+	return NULL;
 }
 
 
@@ -490,6 +491,9 @@ int main(int argc, char **argv)
 	}
 	
 	/* Handling libbpf errors and debug info callback */
+	if (args.log_file && strlen(args.log_file) != 0) {
+		log_info("[+] Logging ePtracer into: %s", args.log_file);
+	}
 	if (libbpf_set_print(libbpf_print_fn) < 0) {
 		log_info("[!] Failed to initialize ePtracer in logging mode.");
 	};
