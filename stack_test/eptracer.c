@@ -14,12 +14,12 @@
 #include <stdlib.h>
 #include <pthread.h>
 
-#include "lib/args.h"
-#include "lib/blazesym.h"
-#include "lib/log.h"
-#include "lib/bpf/eptracer.skeleton.h"
-#include "lib/bpf/stack_tracing.h"
-#include "lib/bpf/syscall_tracing.h"
+#include "./lib/args.h"
+#include "./lib/bpf/blazesym.h"
+#include "./lib/log.h"
+#include "./lib/bpf/eptracer.skeleton.h"
+#include "./stack_tracing.h"
+#include "./syscall_tracing.h"
 
 extern int errno;
 static struct arguments args;
