@@ -52,72 +52,73 @@ static __always_inline __u32 str_equals(const char *s1, const char *s2, __u32 si
 }
 
 /* Stack traces analysis using perf events */
-SEC("perf_event")
-int profile(void *ctx)
-{
-    int max_len = 0, max_buildid_len = 0, total_size = 0;
-    struct stack_trace_t *data;
-    long usize, ksize = 0;
-    char program_name[MAX_PROGRAM_STRING_LEN];
-	const char *program_to_trace;
-    unsigned long pid_to_trace = 0;
-    __u32 key = 0, pid = 0, tgid = 0, prog_cmp_res = 0, processed_char = 0;
-    __u64 pid_tgid = 0;
- 
-
- 	data = bpf_map_lookup_elem(&stackdata_map, &key);
- 	if (!data)
-		return 0;
- 	
-    if (bpf_get_current_comm(&program_name, MAX_PROGRAM_STRING_LEN) < 0) {
-        bpf_printk("[!] Error while getting process name");
-        return 0;
-    }
-
-    program_to_trace = bpf_map_lookup_elem(&program_map, &key);
-    if (!program_to_trace) {
-        bpf_printk("[!] Error while getting program to trace");
-        return 0;
-    }
-
-    pid_tgid = bpf_get_current_pid_tgid();
-  	pid = pid_tgid >> 32; 
-	
-    // skip process if not identified by process name nor PID 
-    if (str_equals(program_name, program_to_trace, sizeof(program_to_trace)) != 0) {
-        processed_char = bpf_strtoul(program_to_trace, sizeof(program_to_trace), 10, &pid_to_trace);
-        if (processed_char == EINVAL) {
-            bpf_printk("bpf_strtoul: no valid digits were found or unsupported base was provided"); 
-        }
-        if (processed_char == ERANGE) {
-            bpf_printk("bpf_strtoul: resulting value was out of range");  
-        }
-        if (pid_to_trace != pid)
-            return 0;
-    }
-
-    max_len = MAX_STACK_RAWTP * sizeof(__u64);
-    max_buildid_len = MAX_STACK_RAWTP * sizeof(struct bpf_stack_build_id);
-    data->pid = pid;
-    data->kern_stack_size = bpf_get_stack(
-				ctx, 
-				data->kern_stack,
-                max_len, 
-				0);
-    data->user_stack_size = bpf_get_stack(
-				ctx, 
-				data->user_stack,
-				max_len,
-                BPF_F_USER_STACK);
-    data->user_stack_buildid_size = bpf_get_stack(
-				ctx, 
-				data->user_stack_buildid, 
-				max_buildid_len,
-				BPF_F_USER_STACK | BPF_F_USER_BUILD_ID);
-    bpf_perf_event_output(ctx, &perfmap, 0, data, sizeof(*data));
- 
-    return 0;
-}
+// SEC("perf_event")
+// int profile(void *ctx)
+// {
+//     int max_len = 0, max_buildid_len = 0, total_size = 0;
+//     struct stack_trace_t *data = NULL;
+//     char program_name[MAX_PROGRAM_STRING_LEN];
+// 	  const char *program_to_trace= NULL;
+//     unsigned long pid_to_trace = 0;
+//     __u32 key = 0, pid = 0, tgid = 0, prog_cmp_res = 0, processed_char = 0;
+//     __u64 pid_tgid = 0;
+//  
+// 
+//     data = bpf_map_lookup_elem(&stackdata_map, &key);
+//     if (!data)
+//       return 0;
+//  	
+//     if (bpf_get_current_comm(&program_name, MAX_PROGRAM_STRING_LEN) < 0) {
+//         bpf_printk("[!] Error while getting process name");
+//         return 0;
+//     }
+// 
+//     program_to_trace = bpf_map_lookup_elem(&program_map, &key);
+//     if (!program_to_trace) {
+//         bpf_printk("[!] Error while getting program to trace");
+//         return 0;
+//     }
+// 
+//     pid_tgid = bpf_get_current_pid_tgid();
+//   	pid = pid_tgid >> 32; 
+// 	
+//     // skip process if not identified by process name nor PID 
+//     if (str_equals(program_name, program_to_trace, sizeof(program_to_trace)) != 0) {
+//         processed_char = bpf_strtoul(program_to_trace, sizeof(program_to_trace), 10, &pid_to_trace);
+//         if (processed_char == EINVAL) {
+//             bpf_printk("bpf_strtoul: no valid digits were found or unsupported base was provided"); 
+//         }
+//         if (processed_char == ERANGE) {
+//             bpf_printk("bpf_strtoul: resulting value was out of range");  
+//         }
+//         if (pid_to_trace != pid)
+//             return 0;
+//     }
+// 
+//     max_len = MAX_STACK_RAWTP * sizeof(__u64);
+//     max_buildid_len = MAX_STACK_RAWTP * sizeof(struct bpf_stack_build_id);
+//     data->pid = pid;
+//     data->kern_stack_size = bpf_get_stack(
+// 				ctx, 
+// 				data->kern_stack,
+//                 max_len, 
+// 				0);
+//     if (data->kern_stack_size < 0) {
+//       bpf_printk("bpf_get_stack: failed to get kernel stack");
+//     }
+//     data->user_stack_size = bpf_get_stack(
+// 				ctx, 
+// 				data->user_stack,
+// 				max_len,
+//                 BPF_F_USER_STACK);
+//     if (data->user_stack_size < 0) {
+//       bpf_printk("bpf_get_stack: failed to get user stack");
+//     }
+//     
+//     bpf_perf_event_output(ctx, &perfmap, 0, data, sizeof(*data));
+//  
+//     return 0;
+// }
 
 /* System call monitoring */
 SEC("tp/raw_syscalls/sys_enter")
@@ -160,26 +161,26 @@ int get_stacktrace(struct raw_syscalls_enter *ctx)
 
     tgid = pid_tgid & 0xffff;
     
-	syscall_data->program_name = program_name;
-	syscall_data->pid = pid;
-	syscall_data->tgid = tgid;
-	syscall_data->syscall_id = ctx->id;
+    //syscall_dat->program_name = program_name;
+    syscall_data->pid = pid;
+    syscall_data->tgid = tgid;
+    syscall_data->syscall_id = ctx->id;
 
-	for (i = 0; i < 6; ++i) {
-		syscall_data->args[i] = ctx->args[i];
-	}
-	
-    bpf_printk("[+] Program: %s", program_name);
-    bpf_printk("	PID: 		%lu", pid);
-    bpf_printk("	TGID: 		%lu", tgid);
-     
-    bpf_printk("	syscall id: 	%ld", ctx->id);
-    bpf_printk("	args: 		(%lx, %s, %lx, %lx, %lx, %lx)",  ctx->args[0], ctx->args[1], ctx->args[2], ctx->args[3], ctx->args[4], ctx->args[5]);
-	if (bpf_ringbuf_output(&syscall_map, &syscall_data, sizeof(syscall_data), 0) < 0) {
-		bpf_printk("[!] Error while sending event to ring buffer");
+    for (i = 0; i < 6; ++i) {
+      syscall_data->args[i] = ctx->args[i];
+    }
+    
+    // bpf_printk("[+] Program: %s", program_name);
+    // bpf_printk("	PID: 		%lu", pid);
+    // bpf_printk("	TGID: 		%lu", tgid);
+    // bpf_printk("	syscall id: 	%ld", ctx->id);
+    // bpf_printk("	args: 		(%lx, %s, %lx, %lx, %lx, %lx)",  ctx->args[0], ctx->args[1], ctx->args[2], ctx->args[3], ctx->args[4], ctx->args[5]);
+
+    if (bpf_ringbuf_output(&syscall_map, syscall_data, sizeof(syscall_data), 0) < 0) {
+        bpf_printk("[!] Error while sending event to ring buffer");
         return 0;
-	}
-	return 1;
+    }
+    return 1;
 }
 
 

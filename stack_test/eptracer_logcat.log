@@ -1,0 +1,6 @@
+05-10 12:41:35.988   308   308 W bpfloader: type=1400 audit(0.0:23): avc:  denied  { read } for  name="eptracer.o" dev="dm-5" ino=57 scontext=u:r:bpfloader:s0 tcontext=u:object_r:system_data_root_file:s0 tclass=file permissive=0
+05-10 12:41:35.974     0     0 E bpfloader: Failed to load object: /system/etc/bpf/eptracer.o, ret: Operation not permitted
+05-10 12:41:35.988   308   308 W bpfloader: type=1400 audit(0.0:24): avc:  denied  { read } for  name="eptracer.o" dev="dm-5" ino=57 scontext=u:r:bpfloader:s0 tcontext=u:object_r:system_data_root_file:s0 tclass=file permissive=0
+05-10 12:41:35.992   308   308 W bpfloader: type=1400 audit(0.0:25): avc:  denied  { read } for  name="eptracer.o" dev="dm-5" ino=57 scontext=u:r:bpfloader:s0 tcontext=u:object_r:system_data_root_file:s0 tclass=file permissive=0
+05-10 12:41:35.992   308   308 W bpfloader: type=1400 audit(0.0:26): avc:  denied  { getattr } for  name="eptracer.o" dev="dm-5" ino=57 scontext=u:r:bpfloader:s0 tcontext=u:object_r:system_data_root_file:s0 tclass=file permissive=0
+05-10 12:41:35.992   308   308 W bpfloader: type=1400 audit(0.0:27): avc:  denied  { read } for  name="eptracer.o" dev="dm-5" ino=57 scontext=u:r:bpfloader:s0 tcontext=u:object_r:system_data_root_file:s0 tclass=file permissive=0
