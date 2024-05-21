@@ -1,15 +1,16 @@
 #!/usr/bin/bash
 # flags needed by blazesym if linked statically
-BLAZESYM_FLAGS="-lrt -ldl -lpthread -lm"
+# BLAZESYM_FLAGS="-lrt -ldl -lpthread -lm"
 ROOT_DIR=$(pwd)
 
+# Creates build directory if not already present
 mkdir -p build
+
 # initialize essential external repositories
 git submodule init
 git submodule update
 
-# creating file necessary for BPF relocation
-bpftool gen skeleton eptracer.bpf.o > ./lib/bpf/eptracer.skeleton.h
+cd ${ROOT_DIR}
 
 # Compile external dependencies
 
@@ -29,23 +30,6 @@ cd argparse
 make 
 cd $ROOT_DIR
 
-# Log
-clang -fPIC -shared -o log/src/log.so log/src/log.c
-
-clang -Wall -Wextra -Wshadow \
-	-O2 -g3 \
-	-I . \
-	-c eptracer.c \
-	-o ./build/eptracer.o
-# libbpf is statically liked to use not exported function parse_cpu_mask_file
-clang -Wall -Wextra -Wshadow \
-	-O2 -g3 \
-	./build/eptracer.o \
-	libbpf/src/build/libbpf.a \
-	argparse/libargparse.so \
-	log/src/log.so \
-	blazesym/target/debug/libblazesym_c.a \
-	$BLAZESYM_FLAGS \
-	-lelf \
-	-lz \
-	-o ./build/eptracer
+# Compile user land and BPF programs using CMake
+cd build && cmake ..
+make
