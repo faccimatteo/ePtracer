@@ -1,12 +1,12 @@
-[submodule "stack_test/argparse"]
-	path = stack_test/argparse
+[submodule "argparse"]
+	path = argparse
 	url = https://github.com/cofyc/argparse
-[submodule "stack_test/blazesym"]
-	path = stack_test/blazesym
+[submodule "blazesym"]
+	path = blazesym
 	url = https://github.com/libbpf/blazesym
-[submodule "stack_test/log"]
-	path = stack_test/log
+[submodule "log"]
+	path = log
 	url = https://github.com/rxi/log.c
-[submodule "stack_test/libbpf"]
-	path = stack_test/libbpf
+[submodule "libbpf"]
+	path = libbpf
 	url = https://github.com/libbpf/libbpf
