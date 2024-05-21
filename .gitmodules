@@ -1,0 +1,12 @@
+[submodule "argparse"]
+	path = argparse
+	url = https://github.com/cofyc/argparse
+[submodule "blazesym"]
+	path = blazesym
+	url = https://github.com/libbpf/blazesym
+[submodule "log"]
+	path = log
+	url = https://github.com/rxi/log.c
+[submodule "libbpf"]
+	path = libbpf
+	url = https://github.com/libbpf/libbpf
