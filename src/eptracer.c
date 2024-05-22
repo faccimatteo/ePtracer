@@ -66,10 +66,13 @@ void cleanup()
 {
 	if (skel)
 		eptracer_bpf__destroy(skel);        
+		skel = NULL;
 	if (symbolizer)
 		blaze_symbolizer_free(symbolizer);
+		symbolizer = NULL;
 	if (perf_buf)
 		perf_buffer__free(perf_buf);
+		perf_buf = NULL;
 
 }
 	
@@ -213,250 +216,250 @@ static struct eptracer_bpf* load_BPF_program()
  * const blaze_symbolize_code_info* code_info: information obtained from blaze related 
  * to the stack address.
  */
-// static void print_frame(
-// 	const char *name, 
-// 	uintptr_t input_addr,
-// 	uintptr_t addr,
-// 	uint64_t offset,
-// 	const blaze_symbolize_code_info* code_info
-// )
-// {
-//     /* If an input address is specified, we have a new symbol we can print. */
-// 	if (input_addr != 0) {
-// 		log_info("%016lx: %s @ 0x%lx+0x%lx", input_addr, name, addr, offset);
-// 		/* Log stack tracing information if */
-// 		if (code_info != NULL && code_info->dir != NULL && code_info->file != NULL) {
-// 			log_info(" %s/%s:%u", code_info->dir, code_info->file, code_info->line);
-// 		} else if (code_info != NULL && code_info->file != NULL) {
-// 			log_info(" %s:%u", code_info->file, code_info->line);
-// 		} else {
-// 			log_info("");
-// 		}
-//     } else {
-// 		printf("%16s  %s", "", name);
-// 
-// 		if (code_info != NULL && code_info->dir != NULL && code_info->file != NULL) {
-// 			log_info("@ %s/%s:%u [inlined]", code_info->dir, code_info->file, code_info->line);
-// 		} else if (code_info != NULL && code_info->file != NULL) {
-// 			log_info("@ %s:%u [inlined]", code_info->file, code_info->line);
-// 		} else {
-// 			log_info("[inlined]");
-// 		}
-//     }
-// }
-// 
-// /*
-//  * show_stack_trace
-//  *
-//  * Description:
-//  * Recover information from stack addresses and output formatted symbolic stack frames.
-//  *
-//  * Params:
-//  * __u64 *stack: stack pointer used to recover stack data.
-//  * int stack_sz: stack size.
-//  * pid_t pid: process id. 
-//  *
-//  * */
-// static void show_stack_trace(const __u64 *stack, unsigned long stack_sz, pid_t pid)
-// {
-// 	const struct blaze_symbolize_inlined_fn* inlined;
-// 	const struct blaze_result *result;
-// 	const struct blaze_sym *sym;
-// 	unsigned long i, j;
-// 
-// 	assert(sizeof(uintptr_t) == sizeof(uint64_t));
-// 
-// 	if (pid) {
-// 		struct blaze_symbolize_src_process src = {
-// 			.type_size = sizeof(src),
-// 			.pid = pid,
-// 		};
-// 		result = blaze_symbolize_process_abs_addrs(symbolizer, &src, (const uintptr_t *)stack, stack_sz);
-// 	} else {
-// 		struct blaze_symbolize_src_kernel src = {
-// 			.type_size = sizeof(src),
-// 		};
-// 		result = blaze_symbolize_kernel_abs_addrs(symbolizer, &src, (const uintptr_t *)stack, stack_sz);
-// 	}
-// 
-// 
-// 	for (i = 0; i < stack_sz; i++) {
-// 		if (!result || result->cnt <= i || result->syms[i].name == NULL) {
-// 			log_info("%016llx: <no-symbol>", stack[i]);
-// 			continue;
-// 		}
-// 
-// 		sym = &result->syms[i];
-// 		print_frame(sym->name, stack[i], sym->addr, sym->offset, &sym->code_info);
-// 
-// 		for (j = 0; j < sym->inlined_cnt; j++) {
-// 		  inlined = &sym->inlined[j];
-// 		  print_frame(sym->name, 0, 0, 0, &inlined->code_info);
-// 		}
-// 	}
-// 
-// 	blaze_result_free(result);
-// }
-// 
-// /*
-//  * stack_event_handler
-//  *
-//  * Description:
-//  * This "perf event" event handler extract stack frames (kernel and user) from kernel 
-//  * perf event and performs kernel and userspace stack tracing. 
-//  * Based on how ePtracer has been configured, output will be redirected into stdout or 
-//  * external logging file. 
-//  * 
-//  * Params:
-//  * void *ctx: perf event's context.
-//  * int cpu: cpu id processing the event.
-//  * void *stack_data: pid stack information containing addresses and size.
-//  * __u32 stack_size: stack size.
-//  *
-//  * */
-// static void stack_event_handler(void *ctx, int cpu, void *stack_data, __u32 stack_size)
-// {
-// 	const struct stack_trace_t *e = stack_data;
-// 	struct tm *tm;
-// 	char ts[32];
-// 	time_t t;
-// 	int fd = 0;
-// 
-//   /* Can't log with empty stacks */
-// 	if (e->kern_stack_size <= 0 && e->user_stack_size)
-// 		return;
-// 
-// 	/* Choosing fd where to log stack events */
-// 	if (f)
-// 		fd = fileno(f);
-// 	else 
-// 		fd = fileno(stdout);
-// 
-// 	if (fd < 0) {
-// 		log_error("[!] Failed to get file descriptor from stdio stream.");
-// 	}
-// 	time(&t);
-// 	tm = localtime(&t);
-// 	strftime(ts, sizeof(ts), "%H:%M:%S", tm);
-// 
-// 	log_info("--------------------------------------------------------------");
-// 	log_info("[+] Stack trace");
-// 	log_info("Time ->  %-8s", ts);
-// 	log_info("PID -> %d", e->pid);
-// 	log_info("CPU -> %d", cpu);
-// 	log_info("Kernel stack size -> %d", e->kern_stack_size);
-// 	log_info("User stack size -> %d", e->user_stack_size);
-// 	
-// 	/* Showing kernel stack events if any */
-// 	if (e->kern_stack_size > 0) {
-// 		log_info("Kernel:");
-// 		show_stack_trace(e->kern_stack, e->kern_stack_size / sizeof(__u64), 0);
-// 	} else {
-// 		log_info("No Kernel Stack");
-// 	}
-// 
-// 	/* Showing user stack events if any */
-// 	if (e->user_stack_size > 0) {
-// 		log_info("Userspace:");
-// 		show_stack_trace(e->user_stack, e->user_stack_size / sizeof(__u64), e->pid);
-// 	} else {
-// 		log_info("No Userspace Stack");
-// 	}
-// 	log_info("--------------------------------------------------------------");
-// 	/* Keep events spaced by one line */
-// 	log_info("");
-// 
-// }
-// 
-// void *stack_tracer(void *stack_tracer_arguments);
-// 
-// void *stack_tracer(void *stack_tracer_arguments)
-// {
-// 	bool *online_mask = NULL;
-// 	int num_online_cpus = 0;
-// 	int ret = 0, num_cpus = 0;
-// 	int pid = -1, cpu = 0, i = 0;
-// 	char* process_id = NULL;
-// 	struct perf_event_attr attr;
-// 	struct bpf_link **links = NULL;
-// 	int *pefds = NULL, pefd;
-// 
-// 	/* Getting necessary params */
-// 	online_mask = ((struct stack_tracer_args*) stack_tracer_arguments)->online_mask;
-// 	num_cpus = ((struct stack_tracer_args*) stack_tracer_arguments)->num_cpus;
-// 	num_online_cpus = ((struct stack_tracer_args*) stack_tracer_arguments)->num_online_cpus;
-// 
-// 	/* Setting up performance monitoring for cpus */
-// 	pefds = malloc(num_cpus * sizeof(int));
-// 	for (i = 0; i < num_cpus; i++) {
-// 		pefds[i] = -1;
-// 	}
-// 
-// 	links = calloc(num_cpus, sizeof(struct bpf_link *));
-// 	
-// 	memset(&attr, 0, sizeof(attr));
-// 	//attr.type = PERF_TYPE_HARDWARE;
-// 	attr.type = PERF_TYPE_SOFTWARE;
-// 	attr.size = sizeof(attr);
-// 	// attr.config = PERF_COUNT_HW_CPU_CYCLES;
-// 	attr.config = PERF_COUNT_SW_CPU_CLOCK;
-// 	attr.sample_freq = 10000;
-// 	attr.freq = 1;
-// 	// Added for VM
-// 	attr.sample_type = PERF_SAMPLE_TID | PERF_SAMPLE_CALLCHAIN | PERF_SAMPLE_STACK_USER;
-// 
-// 
-// 	/* Setting up performance monitoring for cpus */
-// 	for (cpu = 0; cpu < num_cpus; cpu++) {
-// 		/* skip offline/not present CPUs */
-// 		if (cpu >= num_online_cpus || !online_mask[cpu])
-// 			continue;
-// 		
-// 		/* Set up performance monitoring on a CPU/Core */
-// 		pefd = perf_event_open(&attr, pid, cpu, -1, PERF_FLAG_FD_CLOEXEC);
-// 		if (pefd < 0) {
-// 			log_error("[!] Fail to set up performance monitor on a CPU/Core");
-// 			cleanup();
-// 		}
-// 		pefds[cpu] = pefd;
-// 
-// 		/* Attach a BPF program on a CPU */
-// 		links[cpu] = bpf_program__attach_perf_event(skel->progs.profile, pefd);
-// 		if (!links[cpu]) {
-// 			cleanup();
-// 		}
-// 	}
-// 
-// 	log_debug("[+] Attaching to BPF program...");
-// 	errno = eptracer_bpf__attach(skel);
-// 	if (errno) { 
-// 		log_error( "[!] Error finding BPF program");
-// 		cleanup();
-// 	}
-// 	log_debug("[+] Successfully attached to BFP program");
-// 
-// 	// PERF EVENT INITIALIZATION PART
-// 
-// 	log_debug("[+] Creating blaze symbolizer...");
-// 	symbolizer = blaze_symbolizer_new();
-// 	if (!symbolizer) {
-// 		log_error("Fail to create a symbolizer");
-// 		cleanup();
-// 	}
-// 	log_debug("[+] Successfully created blaze symbolizer");
-// 
-// 	log_debug("[+] Creating a BPF perfbuffer manager...");
-// 	perf_buf = perf_buffer__new(bpf_map__fd(skel->maps.perfmap), 8, stack_event_handler, NULL, NULL, NULL);
-// 	if (!perf_buf) {
-// 		log_error("[!] Error creating perf buffer manager");
-// 		cleanup();
-// 	}
-// 	log_debug("[+] Ring buffer successfully created");
-// 
-// 	log_debug("[+] Polling events from perf buffer...");
-// 	while ((ret = perf_buffer__poll(perf_buf, 100)) >= 0) {}
-// 
-// }
+static void print_frame(
+	const char *name, 
+	uintptr_t input_addr,
+	uintptr_t addr,
+	uint64_t offset,
+	const blaze_symbolize_code_info* code_info
+)
+{
+    /* If an input address is specified, we have a new symbol we can print. */
+	if (input_addr != 0) {
+		log_info("%016lx: %s @ 0x%lx+0x%lx", input_addr, name, addr, offset);
+		/* Log stack tracing information if */
+		if (code_info != NULL && code_info->dir != NULL && code_info->file != NULL) {
+			log_info(" %s/%s:%u", code_info->dir, code_info->file, code_info->line);
+		} else if (code_info != NULL && code_info->file != NULL) {
+			log_info(" %s:%u", code_info->file, code_info->line);
+		} else {
+			log_info("");
+		}
+    } else {
+		printf("%16s  %s", "", name);
+
+		if (code_info != NULL && code_info->dir != NULL && code_info->file != NULL) {
+			log_info("@ %s/%s:%u [inlined]", code_info->dir, code_info->file, code_info->line);
+		} else if (code_info != NULL && code_info->file != NULL) {
+			log_info("@ %s:%u [inlined]", code_info->file, code_info->line);
+		} else {
+			log_info("[inlined]");
+		}
+    }
+}
+
+/*
+ * show_stack_trace
+ *
+ * Description:
+ * Recover information from stack addresses and output formatted symbolic stack frames.
+ *
+ * Params:
+ * __u64 *stack: stack pointer used to recover stack data.
+ * int stack_sz: stack size.
+ * pid_t pid: process id. 
+ *
+ * */
+static void show_stack_trace(const __u64 *stack, unsigned long stack_sz, pid_t pid)
+{
+	const struct blaze_symbolize_inlined_fn* inlined;
+	const struct blaze_result *result;
+	const struct blaze_sym *sym;
+	unsigned long i, j;
+
+	assert(sizeof(uintptr_t) == sizeof(uint64_t));
+
+	if (pid) {
+		struct blaze_symbolize_src_process src = {
+			.type_size = sizeof(src),
+			.pid = pid,
+		};
+		result = blaze_symbolize_process_abs_addrs(symbolizer, &src, (const uintptr_t *)stack, stack_sz);
+	} else {
+		struct blaze_symbolize_src_kernel src = {
+			.type_size = sizeof(src),
+		};
+		result = blaze_symbolize_kernel_abs_addrs(symbolizer, &src, (const uintptr_t *)stack, stack_sz);
+	}
+
+
+	for (i = 0; i < stack_sz; i++) {
+		if (!result || result->cnt <= i || result->syms[i].name == NULL) {
+			log_info("%016llx: <no-symbol>", stack[i]);
+			continue;
+		}
+
+		sym = &result->syms[i];
+		print_frame(sym->name, stack[i], sym->addr, sym->offset, &sym->code_info);
+
+		for (j = 0; j < sym->inlined_cnt; j++) {
+		  inlined = &sym->inlined[j];
+		  print_frame(sym->name, 0, 0, 0, &inlined->code_info);
+		}
+	}
+
+	blaze_result_free(result);
+}
+
+/*
+ * stack_event_handler
+ *
+ * Description:
+ * This "perf event" event handler extract stack frames (kernel and user) from kernel 
+ * perf event and performs kernel and userspace stack tracing. 
+ * Based on how ePtracer has been configured, output will be redirected into stdout or 
+ * external logging file. 
+ * 
+ * Params:
+ * void *ctx: perf event's context.
+ * int cpu: cpu id processing the event.
+ * void *stack_data: pid stack information containing addresses and size.
+ * __u32 stack_size: stack size.
+ *
+ * */
+static void stack_event_handler(void *ctx, int cpu, void *stack_data, __u32 stack_size)
+{
+	const struct stack_trace_t *e = stack_data;
+	struct tm *tm;
+	char ts[32];
+	time_t t;
+	int fd = 0;
+
+  /* Can't log with empty stacks */
+	if (e->kern_stack_size <= 0 && e->user_stack_size)
+		return;
+
+	/* Choosing fd where to log stack events */
+	if (f)
+		fd = fileno(f);
+	else 
+		fd = fileno(stdout);
+
+	if (fd < 0) {
+		log_error("[!] Failed to get file descriptor from stdio stream.");
+	}
+	time(&t);
+	tm = localtime(&t);
+	strftime(ts, sizeof(ts), "%H:%M:%S", tm);
+
+	log_info("--------------------------------------------------------------");
+	log_info("[+] Stack trace");
+	log_info("Time ->  %-8s", ts);
+	log_info("PID -> %d", e->pid);
+	log_info("CPU -> %d", cpu);
+	log_info("Kernel stack size -> %d", e->kern_stack_size);
+	log_info("User stack size -> %d", e->user_stack_size);
+	
+	/* Showing kernel stack events if any */
+	if (e->kern_stack_size > 0) {
+		log_info("Kernel:");
+		show_stack_trace(e->kern_stack, e->kern_stack_size / sizeof(__u64), 0);
+	} else {
+		log_info("No Kernel Stack");
+	}
+
+	/* Showing user stack events if any */
+	if (e->user_stack_size > 0) {
+		log_info("Userspace:");
+		show_stack_trace(e->user_stack, e->user_stack_size / sizeof(__u64), e->pid);
+	} else {
+		log_info("No Userspace Stack");
+	}
+	log_info("--------------------------------------------------------------");
+	/* Keep events spaced by one line */
+	log_info("");
+
+}
+
+void *stack_tracer(void *stack_tracer_arguments);
+
+void *stack_tracer(void *stack_tracer_arguments)
+{
+	bool *online_mask = NULL;
+	int num_online_cpus = 0;
+	int ret = 0, num_cpus = 0;
+	int pid = -1, cpu = 0, i = 0;
+	char* process_id = NULL;
+	struct perf_event_attr attr;
+	struct bpf_link **links = NULL;
+	int *pefds = NULL, pefd;
+
+	/* Getting necessary params */
+	online_mask = ((struct stack_tracer_args*) stack_tracer_arguments)->online_mask;
+	num_cpus = ((struct stack_tracer_args*) stack_tracer_arguments)->num_cpus;
+	num_online_cpus = ((struct stack_tracer_args*) stack_tracer_arguments)->num_online_cpus;
+
+	/* Setting up performance monitoring for cpus */
+	pefds = malloc(num_cpus * sizeof(int));
+	for (i = 0; i < num_cpus; i++) {
+		pefds[i] = -1;
+	}
+
+	links = calloc(num_cpus, sizeof(struct bpf_link *));
+	
+	memset(&attr, 0, sizeof(attr));
+	//attr.type = PERF_TYPE_HARDWARE;
+	attr.type = PERF_TYPE_SOFTWARE;
+	attr.size = sizeof(attr);
+	// attr.config = PERF_COUNT_HW_CPU_CYCLES;
+	attr.config = PERF_COUNT_SW_CPU_CLOCK;
+	attr.sample_freq = 10000;
+	attr.freq = 1;
+	/* Needed to a VM */
+	attr.sample_type = PERF_SAMPLE_TID | PERF_SAMPLE_CALLCHAIN | PERF_SAMPLE_STACK_USER;
+
+
+	/* Setting up performance monitoring for cpus */
+	for (cpu = 0; cpu < num_cpus; cpu++) {
+		/* skip offline/not present CPUs */
+		if (cpu >= num_online_cpus || !online_mask[cpu])
+			continue;
+		
+		/* Set up performance monitoring on a CPU/Core */
+		pefd = perf_event_open(&attr, pid, cpu, -1, PERF_FLAG_FD_CLOEXEC);
+		if (pefd < 0) {
+			log_error("[!] Fail to set up performance monitor on a CPU/Core");
+			cleanup();
+		}
+		pefds[cpu] = pefd;
+
+		/* Assign each CPU a BPF program to analyze stack traces */
+		links[cpu] = bpf_program__attach_perf_event(skel->progs.get_stacktrace, pefd);
+		if (!links[cpu]) {
+			cleanup();
+		}
+	}
+
+	log_debug("[+] Attaching to BPF program...");
+	errno = eptracer_bpf__attach(skel);
+	if (errno) { 
+		log_error( "[!] Error finding BPF program");
+		cleanup();
+	}
+	log_debug("[+] Successfully attached to BFP program");
+
+	// PERF EVENT INITIALIZATION PART
+
+	log_debug("[+] Creating blaze symbolizer...");
+	symbolizer = blaze_symbolizer_new();
+	if (!symbolizer) {
+		log_error("Fail to create a symbolizer");
+		cleanup();
+	}
+	log_debug("[+] Successfully created blaze symbolizer");
+
+	log_debug("[+] Creating a BPF perfbuffer manager...");
+	perf_buf = perf_buffer__new(bpf_map__fd(skel->maps.perfmap), 8, stack_event_handler, NULL, NULL, NULL);
+	if (!perf_buf) {
+		log_error("[!] Error creating perf buffer manager");
+		cleanup();
+	}
+	log_debug("[+] Ring buffer successfully created");
+
+	log_debug("[+] Polling events from perf buffer...");
+	while ((ret = perf_buffer__poll(perf_buf, 100)) >= 0) {}
+	return NULL;
+}
 
 /*
  * syscall_event_handler 
@@ -533,14 +536,11 @@ int main(int argc, char **argv)
 	int err = 0, num_cpus = 0, num_online_cpus = 0, i = 0;
 	struct stack_tracer_args stack_thread_arguments;
 	char *process_id = NULL;
-	pthread_t stack_tracer_thread = 0;
-	pthread_t syscall_tracer_thread = 0;
+	pthread_t threads[2];
+	pthread_t stack_tracer_thread;
+	pthread_t syscall_tracer_thread;
 
-	pthread_t threads[2] = {
-		stack_tracer_thread, 
-		syscall_tracer_thread
-	};
-
+	
 	args.process_pid = "";
 	args.process_name = "";
 	args.verbose = false;
@@ -597,7 +597,7 @@ int main(int argc, char **argv)
 			log_error("[!] Error opening and loading BPF file");
 			cleanup();
 			return 1;
-		}		
+	}		
 	log_debug("[+] BFP program correctly loaded");
 
 	log_debug("[+] Setting user program to trace...");
@@ -618,21 +618,27 @@ int main(int argc, char **argv)
 	stack_thread_arguments.num_cpus = num_cpus;
 	stack_thread_arguments.num_online_cpus = num_online_cpus;
 
-	/* Cannot open multiple bpf programs at a time */
-	// if (pthread_create(&stack_tracer_thread, NULL, stack_tracer, (void*) &stack_thread_arguments)) {
-	// 	log_error("[!] Failed to create stack tracer thread.");
-	// 	return 1;
-	// }
-
-	if (pthread_create(&syscall_tracer_thread, NULL, syscall_tracer, NULL)) {
-		log_error("[!] Failed to create syscall tracer thread.");
-		cleanup();
+	/* Creating thread that will handle communication with stack tracer BPF program */	
+	if (pthread_create(&stack_tracer_thread, NULL, stack_tracer, (void*) &stack_thread_arguments)) {
+		log_error("[!] Failed to create stack tracer thread.");
+     	cleanup();
 		return 1;
 	}
 
+	threads[0] = stack_tracer_thread;
+
+	/* Creating thread that will handle communication with syscall tracer BPF program */	
+	// if (pthread_create(&syscall_tracer_thread, NULL, syscall_tracer, NULL)) {
+	// 	log_error("[!] Failed to create syscall tracer thread.");
+	// 	cleanup();
+	// 	return 1;
+	// }
+	//
+	// threads[1] = stack_tracer_thread;
+	
 	for (i = 0; i < 2; ++i) {
 		pthread_join(threads[i], NULL);
 	}
-
+	
 	return 0;
 }

@@ -16,13 +16,13 @@ include_directories(${CMAKE_SOURCE_DIR}/lib)
 # Building shared library from log repository
 add_library(log.so SHARED EXCLUDE_FROM_ALL ${LOG_SRC_DIR}/log.c)
 
-# Create a custom target to compile BPF 
+# Building BPF 
 add_custom_target(eptracer_bpf_o ALL		        
 	COMMAND ${CMAKE_C_COMPILER} -target bpf -I /usr/include/${CMAKE_SYSTEM_PROCESSOR}-linux-gnu -g -O2 -c ${PROJECT_SRC_DIR}/eptracer.bpf.c -o ${CMAKE_BINARY_DIR}/eptracer.bpf.o
 	COMMENT "Building BPF program"
 )
 
-# Create a custom target to compile user space 
+# Building user space 
 add_custom_target(eptracer_o ALL		        
 	COMMAND ${CMAKE_C_COMPILER} -g3 -O2 -c ${PROJECT_SRC_DIR}/eptracer.c -o ${CMAKE_BINARY_DIR}/eptracer.o
 	DEPENDS bpf_skeleton
@@ -36,7 +36,7 @@ add_custom_target(bpf_skeleton ALL
 	COMMENT "Building BPF skeleton"
 )
 
-# Finally compiling eptracer linking all the necessary libraries
+# Finally compiling eptracer
 add_custom_target(eptracer ALL 
 	COMMAND ${CMAKE_C_COMPILER} -Wall -Wextra -Wshadow -O2 -g3 ${PROJECT_BUILD_DIR}/eptracer.o ${CMAKE_SOURCE_DIR}/libbpf/src/build/libbpf.a ${CMAKE_SOURCE_DIR}/argparse/libargparse.so ${CMAKE_SOURCE_DIR}/log/src/log.so ${CMAKE_SOURCE_DIR}/blazesym/target/debug/libblazesym_c.a -lrt -ldl -lpthread -lm -lelf -lz -o ${PROJECT_BUILD_DIR}/eptracer
 	DEPENDS eptracer_o
