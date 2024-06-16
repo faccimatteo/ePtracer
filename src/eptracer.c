@@ -128,7 +128,7 @@ static char* get_process_identifier()
 		return NULL;
 	}
 	if (program_arguments->process_pid && strlen(program_arguments->process_pid) != 0)
-		return program_arguments ->process_pid;
+		return program_arguments->process_pid;
 	if (program_arguments->process_name && strlen(program_arguments->process_name) != 0)
 		return program_arguments->process_name;
 	return NULL;
@@ -162,6 +162,7 @@ static int initialize_array(int fd, char *process_identifier)
 {
 	char name[MAX_PROGRAM_STRING_LEN];
 	char bpf_error = 0;
+	__u32 i = 0;
 
 	if (strlen(process_identifier) > MAX_PROGRAM_STRING_LEN) {
 		log_error("[!] Specified program identifier exceeds program max length.");
@@ -169,11 +170,10 @@ static int initialize_array(int fd, char *process_identifier)
 	}
 
 	strncpy(name, process_identifier, MAX_PROGRAM_STRING_LEN);
-    log_debug("[+] Starting tracing program: %s", name);
-	__u32 i = 0;
+  log_debug("[+] Starting tracing program: %s", name);
 
 	/* Setting program to trace for all the CPUs */
-    bpf_error = bpf_map_update_elem(fd, &i, &name, BPF_ANY);
+  bpf_error = bpf_map_update_elem(fd, &i, &name, BPF_ANY);
 	if (bpf_error < 0)
 		log_error("[!] Failed to update BPF map with program name %s: error %d", name, bpf_error);
 
@@ -405,8 +405,8 @@ void *stack_tracer(void *stack_tracer_arguments)
 	attr.config = PERF_COUNT_SW_CPU_CLOCK;
 	attr.sample_freq = 10000;
 	attr.freq = 1;
-	/* Needed to a VM */
-	attr.sample_type = PERF_SAMPLE_TID | PERF_SAMPLE_CALLCHAIN | PERF_SAMPLE_STACK_USER;
+	/* Configuring perf event sample type */
+	attr.sample_type = PERF_SAMPLE_STACK_USER;
 
 
 	/* Setting up performance monitoring for cpus */
@@ -430,14 +430,7 @@ void *stack_tracer(void *stack_tracer_arguments)
 		}
 	}
 
-	log_debug("[+] Attaching to BPF program...");
-	errno = eptracer_bpf__attach(skel);
-	if (errno) { 
-		log_error( "[!] Error finding BPF program");
-		cleanup();
-	}
-	log_debug("[+] Successfully attached to BFP program");
-
+	
 	// PERF EVENT INITIALIZATION PART
 
 	log_debug("[+] Creating blaze symbolizer...");
@@ -471,9 +464,8 @@ void *stack_tracer(void *stack_tracer_arguments)
  * 
  * Params:
  * void *ctx: perf event's context.
- * int cpu: cpu id processing the event.
- * void *stack_data: pid stack information containing addresses and size.
- * __u32 stack_size: stack size.
+ * void *data: syscall event containing process, thread and arguments.
+ * __u32 size: syscall event size.
  *
  * */
 static int syscall_event_handler(void *ctx, void *data, size_t size)
@@ -501,23 +493,22 @@ static int syscall_event_handler(void *ctx, void *data, size_t size)
 	log_info("--------------------------------------------------------------");
 	log_info("[+] Syscall");
 	log_info("Time ->  %-8s", ts);
-	log_info("PID -> %d", e->pid);
-	log_info("TGID -> %d", e->tgid);
-	log_info("args: 		(%lx, %s, %lx, %lx, %lx, %lx)",  e->args[0], e->args[1], e->args[2], e->args[3], e->args[4], e->args[5]);
+	log_info("Syscall ID -> %ld", e->syscall_id);
+	log_info("PID -> %lu", e->pid);
+	log_info("TGID -> %lu", e->tgid);
+	log_info("args: 		(%lx, %lx, %lx, %lx, %lx, %lx)",  e->args[0], e->args[1], e->args[2], e->args[3], e->args[4], e->args[5]);
 	log_info("--------------------------------------------------------------");
 	return 0;
 }
-
-
 
 void *syscall_tracer();
 
 void* syscall_tracer()
 {
-	int ret = 0;
-		
+	int ret = 0, err;
+
 	log_debug("[+] Creating a BPF ring buffer manager...");
-	ring_buf = ring_buffer__new(bpf_map__fd(skel->maps.syscall_map), syscall_event_handler, NULL, NULL);
+	ring_buf = ring_buffer__new(bpf_map__fd(skel->maps.syscall_rb_map), syscall_event_handler, NULL, NULL);
 	if (!ring_buf) {
 		log_error("[!] Error creating ring buffer manager");
 		cleanup();
@@ -609,6 +600,15 @@ int main(int argc, char **argv)
 	}
 	log_debug("[+] Successfully set user program to trace");
 
+	log_debug("[+] Attaching to BPF program...");
+	errno = eptracer_bpf__attach(skel);
+	if (errno) { 
+		log_error( "[!] Error finding BPF program");
+		cleanup();
+	}
+	log_debug("[+] Successfully attached to BFP program");
+
+
 	log_debug("[+] PID: %s", args.process_pid);
 	log_debug("[+] Process Name: %s", args.process_name);
 	log_debug("[+] Verbose: %d", args.verbose);
@@ -621,20 +621,19 @@ int main(int argc, char **argv)
 	/* Creating thread that will handle communication with stack tracer BPF program */	
 	if (pthread_create(&stack_tracer_thread, NULL, stack_tracer, (void*) &stack_thread_arguments)) {
 		log_error("[!] Failed to create stack tracer thread.");
-     	cleanup();
+    cleanup();
+		return 1;
+	}
+
+	/* Creating thread that will handle communication with syscall tracer BPF program */	
+	if (pthread_create(&syscall_tracer_thread, NULL, syscall_tracer, NULL)) {
+		log_error("[!] Failed to create syscall tracer thread.");
+		cleanup();
 		return 1;
 	}
 
 	threads[0] = stack_tracer_thread;
-
-	/* Creating thread that will handle communication with syscall tracer BPF program */	
-	// if (pthread_create(&syscall_tracer_thread, NULL, syscall_tracer, NULL)) {
-	// 	log_error("[!] Failed to create syscall tracer thread.");
-	// 	cleanup();
-	// 	return 1;
-	// }
-	//
-	// threads[1] = stack_tracer_thread;
+	threads[1] = syscall_tracer_thread;
 	
 	for (i = 0; i < 2; ++i) {
 		pthread_join(threads[i], NULL);

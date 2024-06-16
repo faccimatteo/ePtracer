@@ -3,7 +3,7 @@ struct raw_syscall_t {
 	char *program_name;
 	__u32 pid;
 	__u32 tgid;
-	__u32 syscall_id;
+	__u64 syscall_id;
 	__u64 args[6];
 };
 
