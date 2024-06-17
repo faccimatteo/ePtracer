@@ -454,6 +454,180 @@ void *stack_tracer(void *stack_tracer_arguments)
 	return NULL;
 }
 
+/**
+ * decode_syscall
+ *
+ * Description:
+ * This function is responsible to parse correctly unsigned long syscall arguments based on the correct syscall number.
+ *
+ * Params:
+ * const long syscall_number: system call identifier
+ * const unsigned long args[6]: system call arguemnts, up to a maximum of 6.
+ *
+ * */
+void decode_syscall(const long syscall_number, const unsigned long args[6])
+{
+	switch (syscall_number) {
+		case 0:
+			/* SYS_READ */
+			log_info("sys_read");
+			log_info("args: 		(%lu, %p, %lx, _, _, _)",  args[0], args[1], args[2]);
+			break;
+		case 1:
+			/* SYS_WRITE */
+			log_info("sys_write");
+			log_info("args: 		(%lu, %p, %lx, _, _, _)",  args[0], args[1], args[2]);
+			break;
+		case 2:
+			/* SYS_OPEN */
+			log_info("sys_open");
+			log_info("args: 		(%s, %d, %d, _, _, _)",  args[0], args[1], args[2]);
+			break;
+		case 3:
+			/* SYS_CLOSE */
+			log_info("sys_close");
+			log_info("args: 		(%lu, _, _, _, _, _)",  args[0]);
+			break;
+		case 4:
+			/* SYS_STAT */
+			log_info("sys_stat");
+			log_info("args: 		(%s, %p, _, _, _, _)",  args[0], args[1]);
+			break;
+		case 5:
+			/* SYS_FSTAT */
+			log_info("sys_fstat");
+			log_info("args: 		(%lu, %p, _, _, _, _)",  args[0], args[1]);
+			break;
+		case 6:
+			/* SYS_LSTAT */
+			log_info("sys_lstat");
+			log_info("args: 		(%s, %p, _, _, _, _)",  args[0], args[1]);
+			break;
+		case 7:
+			/* SYS_POLL */
+			log_info("sys_poll");
+			log_info("args: 		(%p, %lu, %ld, _, _, _)",  args[0], args[1], args[2]);
+			break;
+		case 8:
+			/* SYS_LSEEK */
+			log_info("sys_lseek");
+			log_info("args: 		(%u, %lx, %u, _, _, _)", args[0], args[1], args[2]);
+			break;
+		case 9:
+			/* SYS_MMAP */
+			log_info("sys_mmap");
+			log_info("args: 		(%lu, %lu, %lu, %lu, %lu, %lu)", args[0], args[1], args[2], args[3], args[4], args[5]);
+			break;
+		case 10:
+			/* SYS_MPROTECT */
+			log_info("sys_mprotect");
+			log_info("args: 		(%lu, %lx, %lu, _, _, _)", args[0], args[1], args[2]);
+			break;	
+		case 11:
+			/* SYS_MUNMAP */
+			log_info("sys_munmap");
+			log_info("args: 		(%lu, %lx, _, _, _, _)", args[0], args[1]);
+			break;	
+		case 12:
+			/* SYS_BRK */
+			log_info("sys_brk");
+			log_info("args: 		(%lu, _, _, _, _, _)", args[0]);
+			break;	
+		case 13:
+			/* SYS_RT_SIGACTION */
+			log_info("sys_rt_sigaction");
+			log_info("args: 		(%d, %p, %p, %lx, _, _)", args[0], args[1], args[2], args[3]);
+			break;
+		case 14:
+			/* SYS_RT_PROCMASK */
+			log_info("sys_rt_sigaction");
+			log_info("args: 		(%d, %p, %p, %lx, _, _)", args[0], args[1], args[2], args[3]);
+			break;
+		case 15:
+			/* SYS_RT_SIGRETURN */
+			log_info("sys_rt_sigreturn");
+			log_info("args: 		(%lu, _, _, _, _, _)", args[0]);
+			break;
+		case 16:
+			/* SYS_IOCTL */
+			log_info("sys_ioctl");
+			log_info("args: 		(%lu, %lu, %lu, _, _, _)", args[0], args[1], args[2]);
+			break;
+		case 17:
+			/* SYS_PREAD64 */
+			log_info("sys_pread64");
+			log_info("args: 		(%lu, %s, %lx, %lx, _, _)", args[0], args[1], args[2], args[3]);
+			break;
+		case 18:
+			/* SYS_PWRITE64 */
+			log_info("sys_write64");
+			log_info("args: 		(%lu, %s, %lx, %lx, _, _)", args[0], args[1], args[2], args[3]);
+			break;
+		case 19:
+			/* SYS_READV */
+			log_info("sys_readv");
+			log_info("args: 		(%lu, %p, %lu, _, _, _)", args[0], args[1], args[2]);
+			break;
+		case 20:
+			/* SYS_WRITEV */
+			log_info("sys_writev");
+			log_info("args: 		(%lu, %p, %lu, _, _, _)", args[0], args[1], args[2]);
+			break;
+		case 21:
+			/* SYS_ACCESS */
+			log_info("sys_access");
+			log_info("args: 		(%lx, %d, _, _, _, _)", args[0], args[1]);
+			break;
+		case 22:
+			/* SYS_PIPE */
+			log_info("sys_pipe");
+			log_info("args: 		(%p, _, _, _, _, _)", args[0]);
+			break;
+		case 23:
+			/* SYS_SELECT */
+			log_info("sys_select");
+			log_info("args: 		(%d, %p, %p, %p, %p, _)", args[0], args[1], args[2], args[3], args[4]);
+			break;
+		case 24:
+			/* SYS_SCHED_YIELD */
+			log_info("sys_sched_yield");
+			break;
+		case 25:
+			/* SYS_MREMAP */
+			log_info("sys_mremap");
+			log_info("args: 		(%lu, %lu, %lu, %lu, %lu, _)", args[0], args[1], args[2], args[3], args[4]);
+			break;
+		case 26:
+			/* SYS_MYSNC */
+			log_info("sys_mysnc");
+			log_info("args: 		(%lu, %lx, %d, _, _, _)", args[0], args[1], args[2]);
+			break;
+		case 27:
+			/* SYS_MINCORE */
+			log_info("sys_mincore");
+			log_info("args: 		(%lu, %lx, %s, _, _, _)", args[0], args[1], args[2]);
+			break;
+		case 28:
+			/* SYS_MADVISE */
+			log_info("sys_madvise");
+			log_info("args: 		(%lu, %lx, %d, _, _, _)", args[0], args[1], args[2]);
+			break;
+		case 29:
+			/* SYS_SHMGET */
+			log_info("sys_shmget");
+			log_info("args: 		(%lx, %lx, %d, _, _, _)", args[0], args[1], args[2]);
+			break;
+		case 30:
+			/* SYS_SHMAT */
+			log_info("sys_shmat");
+			log_info("args: 		(%d, %s, %d, _, _, _)", args[0], args[1], args[2]);
+			break;
+		default:
+			// log_info("Failed to parse syscall number: %lx", syscall_number);
+			log_info("args: 		(%lx, %lx, %lx, %lx, %lx, %lx)", args[0], args[1], args[2], args[3], args[4], args[5]);
+	}
+}
+
 /*
  * syscall_event_handler 
  * 
@@ -496,7 +670,7 @@ static int syscall_event_handler(void *ctx, void *data, size_t size)
 	log_info("Syscall ID -> %ld", e->syscall_id);
 	log_info("PID -> %lu", e->pid);
 	log_info("TGID -> %lu", e->tgid);
-	log_info("args: 		(%lx, %lx, %lx, %lx, %lx, %lx)",  e->args[0], e->args[1], e->args[2], e->args[3], e->args[4], e->args[5]);
+	decode_syscall(e->syscall_id, e->args);
 	log_info("--------------------------------------------------------------");
 	return 0;
 }
@@ -619,11 +793,11 @@ int main(int argc, char **argv)
 	stack_thread_arguments.num_online_cpus = num_online_cpus;
 
 	/* Creating thread that will handle communication with stack tracer BPF program */	
-	if (pthread_create(&stack_tracer_thread, NULL, stack_tracer, (void*) &stack_thread_arguments)) {
-		log_error("[!] Failed to create stack tracer thread.");
-    cleanup();
-		return 1;
-	}
+	// if (pthread_create(&stack_tracer_thread, NULL, stack_tracer, (void*) &stack_thread_arguments)) {
+	// 	log_error("[!] Failed to create stack tracer thread.");
+  //   cleanup();
+	// 	return 1;
+	// }
 
 	/* Creating thread that will handle communication with syscall tracer BPF program */	
 	if (pthread_create(&syscall_tracer_thread, NULL, syscall_tracer, NULL)) {
