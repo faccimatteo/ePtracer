@@ -140,7 +140,6 @@ int max_len = 0, max_buildid_len = 0, total_size = 0, i = 0;
     __u64 pid_tgid = 0;
 	  struct raw_syscall_t *syscall_data = NULL; 
 
-
     syscall_data = bpf_map_lookup_elem(&syscall_map, &key);
     if (!syscall_data)
         return 0;
@@ -185,7 +184,9 @@ int max_len = 0, max_buildid_len = 0, total_size = 0, i = 0;
     bpf_printk("	PID: 		%lu", pid);
     bpf_printk("	TGID: 		%lu", tgid);
     bpf_printk("	syscall id: 	%ld", syscall_data->syscall_id);
-    bpf_printk("	args: 		(%lx, %s, %lx, %lx, %lx, %lx)",  ctx->args[0], ctx->args[1], ctx->args[2], ctx->args[3], ctx->args[4], ctx->args[5]);
+    bpf_printk("	args: 		(%s, %s, %s, %s, %s, %s)",  ctx->args[0], ctx->args[1], ctx->args[2], ctx->args[3], ctx->args[4], ctx->args[5]);
+    
+    bpf_printk("	args: 		(%s, %d, %d, _, _, _)",  ctx->args[0], ctx->args[1], ctx->args[2]);
 
     if (bpf_ringbuf_output(&syscall_rb_map, syscall_data, sizeof(*syscall_data), 0) < 0) {
         bpf_printk("[!] Error while sending event to ring buffer");
