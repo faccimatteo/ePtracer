@@ -1,7 +1,0 @@
-/home/umadbro/Documents/GitHub/ePtracer/arch/x86_64/build_x86_64/CMakeFiles/log.so.dir
-/home/umadbro/Documents/GitHub/ePtracer/arch/x86_64/build_x86_64/CMakeFiles/eptracer_bpf_o.dir
-/home/umadbro/Documents/GitHub/ePtracer/arch/x86_64/build_x86_64/CMakeFiles/eptracer_o.dir
-/home/umadbro/Documents/GitHub/ePtracer/arch/x86_64/build_x86_64/CMakeFiles/bpf_skeleton.dir
-/home/umadbro/Documents/GitHub/ePtracer/arch/x86_64/build_x86_64/CMakeFiles/eptracer.dir
-/home/umadbro/Documents/GitHub/ePtracer/arch/x86_64/build_x86_64/CMakeFiles/edit_cache.dir
-/home/umadbro/Documents/GitHub/ePtracer/arch/x86_64/build_x86_64/CMakeFiles/rebuild_cache.dir

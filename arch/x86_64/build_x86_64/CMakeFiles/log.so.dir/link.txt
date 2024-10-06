@@ -1,1 +1,0 @@
-clang -fPIC -shared -Wl,-soname,liblog.so.so -o liblog.so.so CMakeFiles/log.so.dir/home/umadbro/Documents/GitHub/ePtracer/log/src/log.c.o

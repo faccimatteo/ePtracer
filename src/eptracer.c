@@ -328,7 +328,7 @@ static void stack_event_handler(void *ctx, int cpu, void *stack_data, __u32 stac
 	time_t t;
 	int fd = 0;
 
-  /* Can't log with empty stacks */
+    /* Can't log with empty stacks */
 	if (e->kern_stack_size <= 0 && e->user_stack_size)
 		return;
 
@@ -585,7 +585,7 @@ void decode_syscall(const long syscall_number, const void *args[6])
 			break;
 		case 28:
 			/* SYS_MADVISE */
-			log_info("sys_madvise	(%lu, %lx, %d)", args[0], args[1], args[2]);
+			log_info("sys_madvise (%lu, %lx, %d)", args[0], args[1], args[2]);
 			break;
 		case 29:
 			/* SYS_SHMGET */
@@ -682,7 +682,8 @@ int main(int argc, char **argv)
 	pthread_t threads[2];
 	pthread_t stack_tracer_thread;
 	pthread_t syscall_tracer_thread;
-	
+	struct bpf_program *antitrace = NULL;
+
 	args.log_file = "";
 	args.process_pid = "";
 	args.process_name = "";
@@ -751,7 +752,7 @@ int main(int argc, char **argv)
 		cleanup();
 		return 1;
 	}
-	log_debug("[+] Successfully set user process to trace");
+	log_debug("[+] Successfully tracing process %s", process_id);
 
 	log_debug("[+] Attaching to BPF program...");
 	errno = eptracer_bpf__attach(skel);
@@ -799,8 +800,9 @@ int main(int argc, char **argv)
 
 	if (!args.show_stacktrace && !args.show_syscall) {
 		log_info("[?] ePtracer is not tracing any event. To trace events, take a look at the usage using --help");
+        return 0;
 	}
-	
+  
 	for (i = 0; i < thread_index; ++i) {
 		pthread_join(threads[i], NULL);
 	}
