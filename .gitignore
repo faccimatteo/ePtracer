@@ -1,2 +1,3 @@
 # Ignore builded files
 build/*
+.output

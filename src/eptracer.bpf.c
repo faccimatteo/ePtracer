@@ -128,18 +128,27 @@ int get_stacktrace(void *ctx)
     return 0;
 }
 
+/* Handling ptrace system call */
+SEC("tp/syscalls/sys_enter_ptrace")
+int antitrace(struct trace_event_raw_sys_enter *ctx)
+{
+    bpf_printk("[+] ptrace has been called");
+    bpf_send_signal(9);
+    return 0;
+}
+
 /* System call monitoring */
 SEC("tracepoint/raw_syscalls/sys_enter")
-int profile(struct raw_syscalls_enter *ctx)
+int tracer(struct raw_syscalls_enter *ctx)
 {
-int max_len = 0, max_buildid_len = 0, total_size = 0, i = 0;
+    int max_len = 0, max_buildid_len = 0, total_size = 0, i = 0;
     char program_name[MAX_PROGRAM_STRING_LEN];
     const char *program_to_trace;
     unsigned long pid_to_trace = 0;
     __u32 key = 0, pid = 0, tgid = 0, prog_cmp_res = 0, processed_char = 0;
     __u64 pid_tgid = 0;
-	  struct raw_syscall_t *syscall_data = NULL; 
-
+	struct raw_syscall_t *syscall_data = NULL; 
+  
     syscall_data = bpf_map_lookup_elem(&syscall_map, &key);
     if (!syscall_data)
         return 0;
@@ -158,7 +167,8 @@ int max_len = 0, max_buildid_len = 0, total_size = 0, i = 0;
     pid_tgid = bpf_get_current_pid_tgid();
   	pid = pid_tgid >> 32; 
 
-    // skip process if not identified by process name nor PID 
+
+    // skip process if not identified by process name nor PID
     if (str_equals(program_name, program_to_trace, sizeof(program_to_trace)) != 0) {
         processed_char = bpf_strtoul(program_to_trace, sizeof(program_to_trace), 10, &pid_to_trace);
         if (processed_char == EINVAL) {
@@ -180,18 +190,19 @@ int max_len = 0, max_buildid_len = 0, total_size = 0, i = 0;
     for (i = 0; i < 6; ++i) {
         syscall_data->args[i] = ctx->args[i];
     }
-    
-    bpf_printk("	PID: 		%lu", pid);
-    bpf_printk("	TGID: 		%lu", tgid);
-    bpf_printk("	syscall id: 	%ld", syscall_data->syscall_id);
-    bpf_printk("	args: 		(%s, %s, %s, %s, %s, %s)",  ctx->args[0], ctx->args[1], ctx->args[2], ctx->args[3], ctx->args[4], ctx->args[5]);
-    
-    bpf_printk("	args: 		(%s, %d, %d, _, _, _)",  ctx->args[0], ctx->args[1], ctx->args[2]);
+     
+    // bpf_printk("	PID: 		%lu", pid);
+    // bpf_printk("	TGID: 		%lu", tgid);
+    // bpf_printk("	syscall id: 	%ld", syscall_data->syscall_id);
+    // bpf_printk("	args: 		(%s, %s, %s, %s, %s, %s)",  ctx->args[0], ctx->args[1], ctx->args[2], ctx->args[3], ctx->args[4], ctx->args[5]);
+    // 
+    // bpf_printk("	args: 		(%s, %d, %d, _, _, _)",  ctx->args[0], ctx->args[1], ctx->args[2]);
 
     if (bpf_ringbuf_output(&syscall_rb_map, syscall_data, sizeof(*syscall_data), 0) < 0) {
         bpf_printk("[!] Error while sending event to ring buffer");
         return 0;
     }
+
     return 1;
 }
 

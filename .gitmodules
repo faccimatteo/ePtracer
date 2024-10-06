@@ -7,6 +7,6 @@
 [submodule "log"]
 	path = log
 	url = https://github.com/rxi/log.c
-[submodule "libbpf"]
-	path = libbpf
-	url = https://github.com/libbpf/libbpf
+[submodule "bpftool"]
+	path = bpftool
+	url = https://github.com/libbpf/bpftool.git
