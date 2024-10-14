@@ -149,10 +149,12 @@ int tracer(struct raw_syscalls_enter *ctx)
     __u64 pid_tgid = 0;
 	struct raw_syscall_t *syscall_data = NULL; 
   
-    syscall_data = bpf_map_lookup_elem(&syscall_map, &key);
-    if (!syscall_data)
+    syscall_data = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*syscall_data), 0);
+    if (!syscall_data) {
+        bpf_printk("[!] Error while allocating syscall data.");
         return 0;
-
+    }
+    
     if (bpf_get_current_comm(&program_name, MAX_PROGRAM_STRING_LEN) < 0) {
         bpf_printk("[!] Error while getting process name");
         return 0;
@@ -191,18 +193,8 @@ int tracer(struct raw_syscalls_enter *ctx)
         syscall_data->args[i] = ctx->args[i];
     }
      
-    // bpf_printk("	PID: 		%lu", pid);
-    // bpf_printk("	TGID: 		%lu", tgid);
-    // bpf_printk("	syscall id: 	%ld", syscall_data->syscall_id);
-    // bpf_printk("	args: 		(%s, %s, %s, %s, %s, %s)",  ctx->args[0], ctx->args[1], ctx->args[2], ctx->args[3], ctx->args[4], ctx->args[5]);
-    // 
-    // bpf_printk("	args: 		(%s, %d, %d, _, _, _)",  ctx->args[0], ctx->args[1], ctx->args[2]);
-
-    if (bpf_ringbuf_output(&syscall_rb_map, syscall_data, sizeof(*syscall_data), 0) < 0) {
-        bpf_printk("[!] Error while sending event to ring buffer");
-        return 0;
-    }
-
+    bpf_ringbuf_submit(syscall_data, 0);
+        
     return 1;
 }
 
