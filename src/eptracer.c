@@ -301,7 +301,7 @@ static void show_stack_trace(const __u64 *stack, unsigned long stack_sz, pid_t p
 		}
 	}
 
-	blaze_result_free(result);
+	blaze_syms_free(result);
 }
 
 /*
