@@ -169,9 +169,3 @@ $(BZS_APPS): $(LIBBLAZESYM_OBJ)
 $(APPS): %: $(OUTPUT)/%.o $(LIBBPF_OBJ) $(LIBBLAZESYM_OBJ) $(LIBARGPARSE_OBJ) $(LIBLOG_OBJ) | $(OUTPUT)
 	$(call msg,BINARY,$@)
 	$(Q)$(CC) $(CFLAGS) $^ $(ALL_LDFLAGS) -lelf -lz -o $@ 
-
-# delete failed targets
-.DELETE_ON_ERROR:
-
-# keep intermediate (.skel.h, .bpf.o, etc) targets
-.SECONDARY:
