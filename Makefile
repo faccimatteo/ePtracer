@@ -92,7 +92,7 @@ all: $(APPS)
 clean:
 	$(call msg,CLEAN)
 	$(Q)rm -rf $(OUTPUT) $(APPS)
-	$(shell ln -s $(abspath ./bpftool/libbpf) libbpf)
+	$(shell rm libbpf)
 
 # Build output dirs 
 $(OUTPUT) $(OUTPUT)/libbpf $(OUTPUT)/log $(OUTPUT)/argparse $(BPFTOOL_OUTPUT):

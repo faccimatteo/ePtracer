@@ -20,7 +20,7 @@
 #include "lib/args.h"
 #include "lib/bpf/blazesym.h"
 #include "lib/log.h"
-#include "lib/bpf/eptracer.skeleton.h"
+#include "lib/bpf/eptracer.skel.h"
 #include "lib/stack_tracing.h"
 #include "lib/syscall_tracing.h"
 
@@ -266,7 +266,7 @@ static void print_frame(
 static void show_stack_trace(const __u64 *stack, unsigned long stack_sz, pid_t pid)
 {
 	const struct blaze_symbolize_inlined_fn* inlined;
-	const struct blaze_result *result;
+	const struct blaze_syms *result;
 	const struct blaze_sym *sym;
 	unsigned long i, j;
 
