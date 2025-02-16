@@ -3,19 +3,20 @@ OUTPUT 				:= .output
 CLANG 				?= clang
 OUTPUT_BIN			:= release 
 SRC 				:= $(abspath ./src)
-LIB_SRC 			:= $(abspath ./src/lib)
+HEADERS_SRC 		:= $(abspath ./src/include)
 LIBBLAZESYM_SRC 	:= $(abspath ./blazesym)
 LIBBLAZESYM_HEADER 	:= $(abspath $(LIBBLAZESYM_SRC)/capi/include)
-LIBBLAZESYM_OBJ 	:= $(abspath $(LIBBLAZESYM_SRC)/target/release/libblazesym_c.so)
+LIBBLAZESYM_OBJ 	:= $(abspath ./blazesym/target/release/libblazesym_c.a)
 LIBBPF_SRC 			:= $(abspath ./libbpf/src)
 LIBARGPARSE_SRC		:= $(abspath ./argparse)
-LIBARGPARSE_OBJ		:= $(abspath $(OUTPUT)/libargparse.so)
+LIBARGPARSE_OBJ		:= $(abspath $(LIBARGPARSE_SRC)/libargparse.a)
 LIBLOG_SRC 			:= $(abspath ./log.c/src)
-LIBLOG_OBJ			:= $(abspath $(OUTPUT)/log.so)
+LIBLOG_OBJ			:= $(LIBLOG_SRC)/log.a
 BPFTOOL_SRC 		:= $(abspath ./bpftool/src)
 LIBBPF_OBJ 			:= $(abspath $(OUTPUT)/libbpf.a)
 BPFTOOL_OUTPUT 		?= $(abspath $(OUTPUT)/bpftool)
 BPFTOOL 			?= $(BPFTOOL_OUTPUT)/bootstrap/bpftool
+# CROSS_COMPILE		?= "" 
 ARCH 				?= $(shell uname -m | sed 's/x86_64/x86/' \
 	 				   	 | sed 's/arm.*/arm/' \
 	 				   	 | sed 's/aarch64/arm64/' \
@@ -28,7 +29,7 @@ VMLINUX 			:= ./vmlinux/$(ARCH)/vmlinux.h
 # libbpf to avoid dependency on system-wide headers, which could be missing or
 # outdated
 INCLUDES 			:= -I$(OUTPUT) -I./libbpf/include/uapi \
-					   -I$(dir $(VMLINUX)) -I$(LIB_SRC)
+					   -I$(dir $(VMLINUX)) -I$(HEADERS_SRC)
 
 CFLAGS 				:= -O2 -Wall -Wformat -Wformat=2 -Wconversion -Wimplicit-fallthrough \
 						-Werror=format-security \
@@ -39,18 +40,20 @@ CFLAGS 				:= -O2 -Wall -Wformat -Wformat=2 -Wconversion -Wimplicit-fallthrough 
 						-Wl,-z,nodlopen -Wl,-z,noexecstack \
 						-Wl,-z,relro -Wl,-z,now \
 						-Wl,--as-needed -Wl,--no-copy-dt-needed-entries
-ALL_LDFLAGS 		:= $(LDFLAGS) $(EXTRA_LDFLAGS)
+ALL_LDFLAGS 		:= $(LDFLAGS) $(EXTRA_LDFLAGS) -static
 
 APPS 				= eptracer 
 
 CARGO 				?= $(shell which cargo)
+
+ALL_LDFLAGS 		+= -lzstd -lutil -lrt -lpthread -lm -ldl -lc
+
 ifeq ($(strip $(CARGO)),)
 BZS_APPS :=
 else
 BZS_APPS 			:= # profile
 APPS 				+= $(BZS_APPS)
-# Required by libblazesym
-ALL_LDFLAGS 		+= -lrt -ldl -lpthread -lm
+# Required by libblazesym when linking statically
 endif
 
 # Get Clang's default includes on this system. We'll explicitly add these dirs
@@ -92,6 +95,7 @@ all: $(APPS)
 clean:
 	$(call msg,CLEAN)
 	$(Q)rm -rf $(OUTPUT) $(APPS)
+	$(MAKE) -C $(LIBARGPARSE_SRC) clean
 	$(shell rm libbpf)
 
 # Build output dirs 
@@ -100,17 +104,18 @@ $(OUTPUT) $(OUTPUT)/libbpf $(OUTPUT)/log $(OUTPUT)/argparse $(BPFTOOL_OUTPUT):
 	$(Q)mkdir -p $@
 
 # Build log
-LIBLOG_FLAGS 		:= -shared -fPIC -DLOG_USE_COLOR
+LIBLOG_FLAGS 		:= -fPIC -DLOG_USE_COLOR
 $(LIBLOG_OBJ): $(LIBLOG_SRC)/log.c
 	$(call msg,LIB,$@)
-	$(Q)$(CC) $(LIBLOG_FLAGS) -o $@ $^
+	$(Q)$(CLANG) -o $(LIBLOG_SRC)/log.o -c $(LIBLOG_FLAGS) $^
+	$(Q)$(AR) rcs $(LIBLOG_OBJ) $(LIBLOG_SRC)/log.o
 
 # Build argparse
 $(LIBARGPARSE_OBJ): $(LIBARGPARSE_SRC)
 	$(Q)$(MAKE) -C $^ BUILD_STATIC_ONLY=1 OBJDIR=$(dir $@)
 	$(call msg,LIB,$@)
-	$(Q)cp $(LIBARGPARSE_SRC)/libargparse.so $@
-
+	$(Q)cp $(LIBARGPARSE_OBJ) $(OUTPUT)
+	
 # Create libbpf symlink from bpftool if it does not exists
 LIBBPF_PATH := ./libbpf
 ifeq (,$(wildcard $(LIBBPF_PATH)))
@@ -120,9 +125,9 @@ endif
 # Build libbpf
 $(LIBBPF_OBJ): $(wildcard $(LIBBPF_SRC)/*.[ch] $(LIBBPF_SRC)/Makefile) | $(OUTPUT)/libbpf
 	$(call msg,LIB,$@)
-	$(Q)$(MAKE) -C $(LIBBPF_SRC) BUILD_STATIC_ONLY=1	\
-		OBJDIR=$(dir $@)libbpf DESTDIR=$(dir $@)		\
-		INCLUDEDIR= LIBDIR= UAPIDIR=			      	\
+	$(Q)$(MAKE) -C $(LIBBPF_SRC) BUILD_STATIC_ONLY=1		\
+		OBJDIR=$(dir $@)libbpf DESTDIR=$(dir $@)			\
+		INCLUDEDIR= LIBDIR= UAPIDIR= ARCH=arm64				\
 		install
 
 # Build bpftool
@@ -133,9 +138,10 @@ $(BPFTOOL): | $(BPFTOOL_OUTPUT)
 # Building blazesym
 $(LIBBLAZESYM_OBJ): 
 	$(Q)cd $(LIBBLAZESYM_SRC)/capi && $(CARGO) build --release
-	$(call msg,LIB, $@)
+	$(call msg,LIB,$@)
 	$(Q)cp $@ $(OUTPUT)
 
+# Copying blazesym headers
 $(LIBBLAZESYM_HEADER):
 	$(call msg,LIB,$@)
 	$(Q)cp $(LIBBLAZESYM_SRC)/target/release/blazesym.h $@
@@ -144,7 +150,7 @@ $(LIBBLAZESYM_HEADER):
 $(OUTPUT)/%.skel.h: $(OUTPUT)/%.bpf.o | $(OUTPUT) $(BPFTOOL)
 	$(call msg,GEN-SKEL,$@)
 	$(Q)$(BPFTOOL) gen skeleton $< > $@
-	$(Q) cp $@ $(abspath ./src/lib/bpf)
+	$(Q) cp $@ $(abspath ./src/include/bpf)
 
 # Build BPF code
 $(OUTPUT)/%.bpf.o: $(SRC)/%.bpf.c $(LIBBPF_OBJ) $(wildcard $(OUTPUT)/%.skel.h) $(VMLINUX) | $(OUTPUT) $(BPFTOOL)
@@ -168,4 +174,4 @@ $(BZS_APPS): $(LIBBLAZESYM_OBJ)
 # Build application binary
 $(APPS): %: $(OUTPUT)/%.o $(LIBBPF_OBJ) $(LIBBLAZESYM_OBJ) $(LIBARGPARSE_OBJ) $(LIBLOG_OBJ) | $(OUTPUT)
 	$(call msg,BINARY,$@)
-	$(Q)$(CC) $(CFLAGS) $^ $(ALL_LDFLAGS) -lelf -lz -o $@ 
+	$(Q)$(CC) $^ $(ALL_LDFLAGS) -lelf -lz -o $@ 

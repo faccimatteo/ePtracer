@@ -17,12 +17,12 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
-#include "lib/args.h"
-#include "lib/bpf/blazesym.h"
-#include "lib/log.h"
-#include "lib/bpf/eptracer.skel.h"
-#include "lib/stack_tracing.h"
-#include "lib/syscall_tracing.h"
+#include "include/args.h"
+#include "include/bpf/blazesym.h"
+#include "include/log.h"
+#include "include/bpf/eptracer.skel.h"
+#include "include/stack_tracing.h"
+#include "include/syscall_tracing.h"
 
 extern int errno;
 static struct arguments args;
@@ -52,10 +52,7 @@ extern int parse_cpu_mask_file(const char *fcpu, bool **mask, int *mask_sz);
 static long perf_event_open(struct perf_event_attr *hw_event, pid_t pid, int cpu, int group_fd,
 			    unsigned long flags)
 {
-	int ret;
-
-	ret = syscall(__NR_perf_event_open, hw_event, pid, cpu, group_fd, flags);
-	return ret;
+	return syscall(__NR_perf_event_open, hw_event, pid, cpu, group_fd, flags);
 }
 
 /**
@@ -67,16 +64,18 @@ static long perf_event_open(struct perf_event_attr *hw_event, pid_t pid, int cpu
  * */
 void cleanup() 
 {
-	if (skel)
+	if (skel) {
 		eptracer_bpf__destroy(skel);        
 		skel = NULL;
-	if (symbolizer)
+    }
+	if (symbolizer) {
 		blaze_symbolizer_free(symbolizer);
 		symbolizer = NULL;
-	if (perf_buf)
+    }
+	if (perf_buf) {
 		perf_buffer__free(perf_buf);
 		perf_buf = NULL;
-
+    }
 }
 	
 
@@ -104,7 +103,7 @@ static int libbpf_print_fn(enum libbpf_print_level level, const char *format, va
 	}
 
 	if (args.log_file && strlen(args.log_file) != 0) {
-			return fprintf(f, format, fn_args);
+        return fprintf(f, format, fn_args);
 	} else {
 		return fprintf(stdout, format, fn_args);
 	}
@@ -164,7 +163,7 @@ static char* get_process_identifier()
 static int initialize_array(int fd, char *process_identifier)
 {
 	char name[MAX_PROGRAM_STRING_LEN];
-	char bpf_error = 0;
+	int bpf_error = 0;
 	__u32 i = 0;
 
 	if (strlen(process_identifier) > MAX_PROGRAM_STRING_LEN) {
@@ -173,10 +172,10 @@ static int initialize_array(int fd, char *process_identifier)
 	}
 
 	strncpy(name, process_identifier, MAX_PROGRAM_STRING_LEN);
-  log_debug("[+] Starting tracing program: %s", name);
+    log_debug("[+] Starting tracing program: %s", name);
 
 	/* Setting process to trace for all the CPUs */
-  bpf_error = bpf_map_update_elem(fd, &i, &name, BPF_ANY);
+    bpf_error = bpf_map_update_elem(fd, &i, &name, BPF_ANY);
 	if (bpf_error < 0)
 		log_error("[!] Failed to update BPF map with program name %s: error %d", name, bpf_error);
 
@@ -275,7 +274,7 @@ static void show_stack_trace(const __u64 *stack, unsigned long stack_sz, pid_t p
 	if (pid) {
 		struct blaze_symbolize_src_process src = {
 			.type_size = sizeof(src),
-			.pid = pid,
+			.pid = (uint) pid,
 		};
 		result = blaze_symbolize_process_abs_addrs(symbolizer, &src, (const uintptr_t *)stack, stack_sz);
 	} else {
@@ -328,10 +327,6 @@ static void stack_event_handler(void *ctx, int cpu, void *stack_data, __u32 stac
 	time_t t;
 	int fd = 0;
 
-    /* Can't log with empty stacks */
-	if (e->kern_stack_size <= 0 && e->user_stack_size)
-		return;
-
 	/* Choosing fd where to log stack events */
 	if (f)
 		fd = fileno(f);
@@ -350,11 +345,10 @@ static void stack_event_handler(void *ctx, int cpu, void *stack_data, __u32 stac
 	log_info("Time ->  %-8s", ts);
 	log_info("PID -> %d", e->pid);
 	log_info("CPU -> %d", cpu);
-	log_info("Kernel stack size -> %d", e->kern_stack_size);
-	log_info("User stack size -> %d", e->user_stack_size);
 	
 	/* Showing kernel stack events if any */
 	if (e->kern_stack_size > 0) {
+	    log_info("Kernel stack size -> %d", e->kern_stack_size);
 		log_info("Kernel:");
 		show_stack_trace(e->kern_stack, e->kern_stack_size / sizeof(__u64), 0);
 	} else {
@@ -364,6 +358,7 @@ static void stack_event_handler(void *ctx, int cpu, void *stack_data, __u32 stac
 	/* Showing user stack events if any */
 	if (e->user_stack_size > 0) {
 		log_info("Userspace:");
+	    log_info("User stack size -> %d", e->user_stack_size);
 		show_stack_trace(e->user_stack, e->user_stack_size / sizeof(__u64), e->pid);
 	} else {
 		log_info("No Userspace Stack");
@@ -382,10 +377,10 @@ void *stack_tracer(void *stack_tracer_arguments)
 	int num_online_cpus = 0;
 	int ret = 0, num_cpus = 0;
 	int pid = -1, cpu = 0, i = 0;
-	char* process_id = NULL;
 	struct perf_event_attr attr;
 	struct bpf_link **links = NULL;
-	int *pefds = NULL, pefd;
+	int *perfds = NULL;
+    long perfd;
 
 	/* Getting necessary params */
 	online_mask = ((struct stack_tracer_args*) stack_tracer_arguments)->online_mask;
@@ -393,9 +388,9 @@ void *stack_tracer(void *stack_tracer_arguments)
 	num_online_cpus = ((struct stack_tracer_args*) stack_tracer_arguments)->num_online_cpus;
 
 	/* Setting up performance monitoring for cpus */
-	pefds = malloc(num_cpus * sizeof(int));
+	perfds = malloc(num_cpus * sizeof(int));
 	for (i = 0; i < num_cpus; i++) {
-		pefds[i] = -1;
+		perfds[i] = -1;
 	}
 
 	links = calloc(num_cpus, sizeof(struct bpf_link *));
@@ -419,15 +414,15 @@ void *stack_tracer(void *stack_tracer_arguments)
 			continue;
 		
 		/* Set up performance monitoring on a CPU/Core */
-		pefd = perf_event_open(&attr, pid, cpu, -1, PERF_FLAG_FD_CLOEXEC);
-		if (pefd < 0) {
+		perfd = perf_event_open(&attr, pid, cpu, -1, PERF_FLAG_FD_CLOEXEC);
+		if (perfd < 0) {
 			log_error("[!] Fail to set up performance monitor on a CPU/Core");
 			cleanup();
 		}
-		pefds[cpu] = pefd;
+		perfds[cpu] = perfd;
 
 		/* Assign each CPU a BPF program to analyze stack traces */
-		links[cpu] = bpf_program__attach_perf_event(skel->progs.get_stacktrace, pefd);
+		links[cpu] = bpf_program__attach_perf_event(skel->progs.get_stacktrace, perfd);
 		if (!links[cpu]) {
 			cleanup();
 		}
@@ -468,7 +463,7 @@ void *stack_tracer(void *stack_tracer_arguments)
  * const unsigned long args[6]: system call arguemnts, up to a maximum of 6.
  *
  * */
-void decode_syscall(const long syscall_number, const void *args[6])
+void decode_syscall(const __u64 syscall_number, const void *args[6])
 {
 	switch (syscall_number) {
 		case 0:
@@ -657,7 +652,7 @@ void *syscall_tracer();
 
 void* syscall_tracer()
 {
-	int ret = 0, err;
+	int ret = 0;
 
 	log_debug("[+] Creating a BPF ring buffer manager...");
 	ring_buf = ring_buffer__new(bpf_map__fd(skel->maps.syscall_rb_map), syscall_event_handler, NULL, NULL);
@@ -682,7 +677,6 @@ int main(int argc, char **argv)
 	pthread_t threads[2];
 	pthread_t stack_tracer_thread;
 	pthread_t syscall_tracer_thread;
-	struct bpf_program *antitrace = NULL;
 
 	args.log_file = "";
 	args.process_pid = "";
