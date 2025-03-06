@@ -1,10 +1,9 @@
-#include <linux/bpf.h>
+#include <linux/sched.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <errno.h>
-#include <linux/sched.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -38,7 +37,6 @@ struct {
     __type(key, __u32);
     __type(value, struct raw_syscall_t);
 } syscall_map SEC(".maps");
-
 
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
@@ -76,13 +74,15 @@ int get_stacktrace(void *ctx)
     if (!data)
         return 0;
  	
-    if (bpf_get_current_comm(&program_name, MAX_PROGRAM_STRING_LEN) < 0) {
+    if (bpf_get_current_comm(&program_name, MAX_PROGRAM_STRING_LEN) < 0)
+    {
         bpf_printk("[!] Error while getting process name");
         return 0;
     }
 
     program_to_trace = bpf_map_lookup_elem(&program_map, &key);
-    if (!program_to_trace) {
+    if (!program_to_trace)
+    {
         bpf_printk("[!] Error while getting program to tlinking all the necessary librariesrace");
         return 0;
     }
@@ -91,14 +91,13 @@ int get_stacktrace(void *ctx)
   	pid = pid_tgid >> 32; 
 	
     // skip process if not identified by process name nor PID 
-    if (str_equals(program_name, program_to_trace, sizeof(program_to_trace)) != 0) {
+    if (str_equals(program_name, program_to_trace, sizeof(program_to_trace)) != 0)
+    {
         processed_char = bpf_strtoul(program_to_trace, sizeof(program_to_trace), 10, &pid_to_trace);
-        if (processed_char == EINVAL) {
+        if (processed_char == EINVAL)
             bpf_printk("bpf_strtoul: no valid digits were found or unsupported base was provided"); 
-        }
-        if (processed_char == ERANGE) {
+        if (processed_char == ERANGE)
             bpf_printk("bpf_strtoul: resulting value was out of range");  
-        }
         if (pid_to_trace != pid)
             return 0;
     }
@@ -111,31 +110,33 @@ int get_stacktrace(void *ctx)
 				data->kern_stack,
                 max_len, 
 				0);
-    if (data->kern_stack_size < 0) {
+    if (data->kern_stack_size < 0)
         bpf_printk("bpf_get_stack: failed to get kernel stack");
-    }
+
     data->user_stack_size = bpf_get_stack(
 				ctx, 
 				data->user_stack,
 				max_len,
                 BPF_F_USER_STACK);
-    if (data->user_stack_size < 0) {
+    if (data->user_stack_size < 0)
         bpf_printk("bpf_get_stack: failed to get user stack");
-    }
     
     bpf_perf_event_output(ctx, &perfmap, 0, data, sizeof(*data));
  
     return 0;
 }
 
-/* Handling ptrace system call */
+/* Terminate ptrace-based debugger when a tentative to hook the target process is made */
 SEC("tp/syscalls/sys_enter_ptrace")
-int antitrace(struct trace_event_raw_sys_enter *ctx)
+int terminate_ptrace_based_debugger(struct trace_event_raw_sys_enter *ctx)
 {
     bpf_printk("[+] ptrace has been called");
+    // send kill signal to tracer process
     bpf_send_signal(9);
     return 0;
 }
+
+
 
 /* System call monitoring 
 SEC("tracepoint/raw_syscalls/sys_enter")
@@ -210,7 +211,7 @@ int max_len = 0, max_buildid_len = 0, total_size = 0, i = 0;
     unsigned long pid_to_trace = 0;
     __u32 key = 0, pid = 0, tgid = 0, prog_cmp_res = 0, processed_char = 0;
     __u64 pid_tgid = 0;
-	  struct raw_syscall_t *syscall_data = NULL; 
+	struct raw_syscall_t *syscall_data = NULL; 
 
     syscall_data = bpf_map_lookup_elem(&syscall_map, &key);
     if (!syscall_data)
