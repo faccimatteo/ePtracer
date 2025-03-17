@@ -127,7 +127,7 @@ int get_stacktrace(void *ctx)
 }
 
 /* Terminate ptrace-based debugger when a tentative to hook the target process is made */
-SEC("tp/syscalls/sys_enter_ptrace")
+SEC("tracepoint/syscalls/sys_enter_ptrace")
 int terminate_ptrace_based_debugger(struct trace_event_raw_sys_enter *ctx)
 {
     bpf_printk("[+] ptrace has been called");

@@ -44,7 +44,7 @@ static void sig_handler(int sig)
 
 int handle_event(void *ctx, void *data, size_t data_sz)
 {
-	const struct tcp_data_t *e = data;
+	const struct jdwp_data_t *e = data;
 	struct tm *tm;
 	char ts[32];
 	time_t t;
@@ -52,8 +52,10 @@ int handle_event(void *ctx, void *data, size_t data_sz)
 	time(&t);
 	tm = localtime(&t);
 	strftime(ts, sizeof(ts), "%H:%M:%S", tm);
-
-	printf("Received %ld bytes: %s", strlen(e->data), e->data);
+  
+    printf("Src: %ld Dest: %ld\n", e->src_port, e->dst_port);
+    printf("Seq: %ld\n", e->seq);
+	printf("Received %ld bytes: %s\n", strlen(e->data), e->data);
 
 	return 0;
 }
@@ -102,7 +104,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-	/* Set up ring buffer polling 
+	/* Set up ring buffer polling */
 	rb = ring_buffer__new(bpf_map__fd(skel->maps.rb), handle_event, NULL, NULL);
 	if (!rb) {
 		err = -1;
