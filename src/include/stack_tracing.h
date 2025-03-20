@@ -1,4 +1,3 @@
-#include <linux/bpf.h>
 
 /* Permit pretty deep stack traces */
 #define MAX_STACK_RAWTP 100

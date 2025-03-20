@@ -174,4 +174,4 @@ $(BZS_APPS): $(LIBBLAZESYM_OBJ)
 # Build application binary
 $(APPS): %: $(OUTPUT)/%.o $(LIBBPF_OBJ) $(LIBBLAZESYM_OBJ) $(LIBARGPARSE_OBJ) $(LIBLOG_OBJ) | $(OUTPUT)
 	$(call msg,BINARY,$@)
-	$(Q)$(CC) $^ $(ALL_LDFLAGS) -lelf -lz -o $@ 
+	$(Q)$(CC) $^ $(ALL_LDFLAGS) -g3 -lelf -lz -o $@ 

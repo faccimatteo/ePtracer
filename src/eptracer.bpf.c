@@ -1,15 +1,16 @@
-#include <linux/sched.h>
+/* vmlinux.h must be the first one to be included if using BTF */
+#include "vmlinux.h"
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
-#include <stdio.h>
-#include <stdint.h>
 #include <errno.h>
 #include <string.h>
-#include <stdlib.h>
 
 #include "include/stack_tracing.h"
 #include "include/syscall_tracing.h"
-		
+
+typedef unsigned int __u32;
+typedef unsigned long long __u64;
+
 struct {
     __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
     __uint(max_entries, 2);
@@ -83,7 +84,7 @@ int get_stacktrace(void *ctx)
     program_to_trace = bpf_map_lookup_elem(&program_map, &key);
     if (!program_to_trace)
     {
-        bpf_printk("[!] Error while getting program to tlinking all the necessary librariesrace");
+        bpf_printk("[!] Error while getting program to trace");
         return 0;
     }
 
@@ -138,68 +139,75 @@ int terminate_ptrace_based_debugger(struct trace_event_raw_sys_enter *ctx)
 
 
 
-/* System call monitoring 
-SEC("tracepoint/raw_syscalls/sys_enter")
-int tracer(struct raw_syscalls_enter *ctx)
+SEC("tracepoint/syscalls/sys_enter_execve")
+int read_decode(struct syscall_execve_enter *ctx) 
 {
-    int max_len = 0, max_buildid_len = 0, total_size = 0, i = 0;
-    char program_name[MAX_PROGRAM_STRING_LEN];
-    const char *program_to_trace;
-    unsigned long pid_to_trace = 0;
-    __u32 key = 0, pid = 0, tgid = 0, prog_cmp_res = 0, processed_char = 0;
-    __u64 pid_tgid = 0;
-    
-	struct raw_syscall_t *syscall_data; 
-  
-    syscall_data = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*syscall_data), 0);
-    if (!syscall_data) {
-        bpf_printk("[!] Error while allocating syscall data.");
-        return 0;
-    }
-    
-    if (bpf_get_current_comm(&program_name, MAX_PROGRAM_STRING_LEN) < 0) {
-        bpf_printk("[!] Error while getting process name");
-        return 0;
-    }
+    const char *filename;
+    const char **argv;
+    const char **envp;
+    char fname[MAX_LEN] = {0};
+    char arg[MAX_LEN] = {0};
+    int i = 0;
 
-    program_to_trace = bpf_map_lookup_elem(&program_map, &key);
-    if (!program_to_trace) {
-        bpf_printk("[!] Error while getting program to trace");
-        return 0;
-    }
+    // Extract syscall arguments
+    filename = (char *)ctx->argv[0];
+    argv = (char **)ctx->argv[1];
+    envp = (char **)ctx->argv[2];
 
-    pid_tgid = bpf_get_current_pid_tgid();
-  	pid = pid_tgid >> 32; 
+    // Read filename
+    bpf_probe_read_user_str(fname, sizeof(fname), ctx->filename);
+    bpf_printk("execve: %s", fname);
 
-
-    // skip process if not identified by process name nor PID
-    if (str_equals(program_name, program_to_trace, sizeof(program_to_trace)) != 0) {
-        processed_char = bpf_strtoul(program_to_trace, sizeof(program_to_trace), 10, &pid_to_trace);
-        if (processed_char == EINVAL) {
-            bpf_printk("bpf_strtoul: no valid digits were found or unsupported base was provided"); 
-        }
-        if (processed_char == ERANGE) {
-            bpf_printk("bpf_strtoul: resulting value was out of range");  
-        }
-        if (pid_to_trace != pid)
-            return 0;
+    // Read execve arguments (argv)
+    for (i = 0; i < ARGV_MAX_SIZE; i++) {
+        const char *arg_ptr;
+        bpf_probe_read_user(&arg_ptr, sizeof(arg_ptr), &ctx->argv[i]);
+        // Checking if we have more arguments to scan
+        if (!arg_ptr) break;
+        bpf_probe_read_user_str(arg, sizeof(arg), arg_ptr);
+        bpf_printk(" arg[%d]: %s", i, arg);
     }
 
-    tgid = pid_tgid & 0xffff;
-    
-    syscall_data->pid = pid;
-    syscall_data->tgid = tgid;
-    syscall_data->syscall_id = ctx->id;
-
-    for (i = 0; i < 6; ++i) {
-        syscall_data->args[i] = ctx->args[i];
+    // Read env variables used by newly created program (envp)
+    for (i = 0; i < ENVP_MAX_SIZE; i++) {
+        const char *env_ptr;
+        bpf_probe_read_user(&env_ptr, sizeof(env_ptr), &ctx->envp[i]);
+        // Checking if we have more env variables to scan
+        if (!env_ptr) break;
+        bpf_probe_read_user_str(arg, sizeof(arg), env_ptr);
+        bpf_printk(" env[%d]: %s", i, arg);
     }
-     
-    bpf_ringbuf_submit(syscall_data, 0);
-    
+
     return 0;
 }
-*/
+
+SEC("tracepoint/syscalls/sys_enter_write")
+int write_decode(struct trace_event_raw_sys_enter *ctx) 
+{
+    // unsigned int fd;
+    // const char *buf;
+    // size_t count;
+    // char buffer[MAX_BUF_SIZE] = {0};
+
+    // // Extract syscall arguments
+    // fd = ctx->fd;
+    // buf = (const char *)ctx->buf;
+    // count = ctx->count;
+
+    // // Limit read size to MAX_BUF_SIZE
+    // size_t to_read = count < MAX_BUF_SIZE ? count : MAX_BUF_SIZE;
+
+    // // Read user buffer safely
+    // bpf_probe_read_user(buffer, to_read, buf);
+
+    // // Print extracted information
+    // bpf_printk("write(fd=%d, count=%ld): %s", fd, count, buffer);
+
+    // return 0;
+    
+    // bpf_printk("write() triggered! args: %lx %lx %lx", ctx->args[0], ctx->args[1], ctx->args[2]);
+    return 0;
+}
 
 /* System call monitoring */
 SEC("tracepoint/raw_syscalls/sys_enter")
@@ -212,6 +220,11 @@ int max_len = 0, max_buildid_len = 0, total_size = 0, i = 0;
     __u32 key = 0, pid = 0, tgid = 0, prog_cmp_res = 0, processed_char = 0;
     __u64 pid_tgid = 0;
 	struct raw_syscall_t *syscall_data = NULL; 
+    char buf[256];
+
+    if (ctx->id != 0) {
+        return 0;
+    }
 
     syscall_data = bpf_map_lookup_elem(&syscall_map, &key);
     if (!syscall_data)
@@ -254,12 +267,12 @@ int max_len = 0, max_buildid_len = 0, total_size = 0, i = 0;
         syscall_data->args[i] = ctx->args[i];
     }
     
-    bpf_printk("	PID: 		%lu", pid);
-    bpf_printk("	TGID: 		%lu", tgid);
-    bpf_printk("	syscall id: 	%ld", syscall_data->syscall_id);
-    bpf_printk("	args: 		(%s, %s, %s, %s, %s, %s)",  ctx->args[0], ctx->args[1], ctx->args[2], ctx->args[3], ctx->args[4], ctx->args[5]);
-    
-    bpf_printk("	args: 		(%s, %d, %d, _, _, _)",  ctx->args[0], ctx->args[1], ctx->args[2]);
+    // bpf_printk("	PID: 		%lu", pid);
+    // bpf_printk("	TGID: 		%lu", tgid);
+    // bpf_printk("	syscall id: 	%ld", syscall_data->syscall_id);
+    // bpf_printk("	args: 		(%s, %s, %s, %s, %s, %s)",  ctx->args[0], ctx->args[1], ctx->args[2], ctx->args[3], ctx->args[4], ctx->args[5]);
+    // 
+    // bpf_printk("	args: 		(%s, %d, %d, _, _, _)",  ctx->args[0], ctx->args[1], ctx->args[2]);
 
     if (bpf_ringbuf_output(&syscall_rb_map, syscall_data, sizeof(*syscall_data), 0) < 0) {
         bpf_printk("[!] Error while sending event to ring buffer");

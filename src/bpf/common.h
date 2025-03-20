@@ -1,5 +1,3 @@
-#include <linux/types.h>
-
 #define MAXTCPDATA 256
 
 /* Stores TCP information necessary to distinguish JDWP handsake TCP packet */

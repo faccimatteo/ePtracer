@@ -14,7 +14,7 @@
 
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
-    __uint(max_entries, 512 * 1024 /* 256 KB */);
+    __uint(max_entries, 512 * 1024);
 } rb SEC(".maps");
 
 struct header_pointers {
@@ -23,19 +23,6 @@ struct header_pointers {
 	struct tcphdr *tcph;
 	__u16 tcph_len;
 };
-
-/* Identifies IPv4 packets */
-static int is_IPV4(struct header_pointers *hdr)
-{
-    // Is IPv4 packet? 
-    return bpf_ntohs(hdr->eth->h_proto) == ETH_P_IP && hdr->iph->version == 4;
-}
-
-/* Identifies TCP packets */
-static int is_TCP(struct iphdr *iph) 
-{
-    return iph->protocol == IPPROTO_TCP;
-}
 
 static int detect_jdwp_protocol(struct xdp_md *ctx, struct header_pointers *hdr)
 {
@@ -65,18 +52,17 @@ static int detect_jdwp_protocol(struct xdp_md *ctx, struct header_pointers *hdr)
         return XDP_DROP;
     
     /* https://github.com/torvalds/linux/blob/master/include/uapi/linux/tcp.h */
-    bpf_probe_read_kernel(&src_port, sizeof(src_port), &hdr->tcph->source);
-    bpf_probe_read_kernel(&dst_port, sizeof(dst_port), &hdr->tcph->dest);
-    bpf_probe_read_kernel(&seq, sizeof(seq), &hdr->tcph->seq);
+    bpf_probe_read_kernel_str(&src_port, sizeof(src_port), &hdr->tcph->source);
+    bpf_probe_read_kernel_str(&dst_port, sizeof(dst_port), &hdr->tcph->dest);
+    bpf_probe_read_kernel_str(&seq, sizeof(seq), &hdr->tcph->seq);
     jdwp_data.src_port = be16toh(src_port);    
     jdwp_data.dst_port = be16toh(dst_port);  
     jdwp_data.seq = be32toh(seq);  
-    
     bpf_printk("seq: %ld", jdwp_data.seq);
 
     // Successfully processing a TCP packet at this point 
     tcp_data = (char *)(hdr->tcph + 1);
-    if ((void *)tcp_data + MAXTCPDATA  > data_end) {
+    if ((void *)tcp_data + MAXTCPDATA > data_end) {
         return XDP_PASS;
     }
      

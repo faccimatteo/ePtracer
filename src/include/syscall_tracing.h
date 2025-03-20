@@ -1,3 +1,11 @@
+/* Used by exec syscall */
+#define ARGV_MAX_SIZE 5
+#define ENVP_MAX_SIZE 3
+/* Max string length used inside eBPF programs */
+#define MAX_LEN 128 
+
+/* Maximum redable buffer size by the write system */
+#define MAX_BUF_SIZE 128
 
 struct raw_syscall_t {
 	char *program_name;
@@ -15,4 +23,33 @@ struct raw_syscalls_enter {
 
 	long id;
 	unsigned long args[6];
+};
+
+struct syscall_execve_enter {
+    /* 
+      First 4 fields are not used but necessary to get the 
+      right value for the next fields in the structure
+    */
+    unsigned short  common_type;
+    unsigned char   common_flags;
+    unsigned char   common_preempt_count;
+    int common_pid;
+
+    int __syscall_nr;
+    const char * filename;
+    const char *const * argv;
+    const char *const * envp;
+};
+
+
+struct syscall_enter {
+    __u32 pid;
+    long id;
+    
+    unsigned char rdi;
+    unsigned char rsi;
+    unsigned char rdx;
+    unsigned char r10;
+    unsigned char r8;
+    unsigned char r9;
 };
