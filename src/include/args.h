@@ -19,10 +19,9 @@ static const char argp_program_doc[] = "\n\
 | 10                                                                          \n\
 |__/ \n"
                                 "\n"
-                                "Ptracer-eBPF is a process analyzer which is capable of: \n"
-                                " - tracing process system calls \n"
-                                " - dump process stack frame to get a full overview about process call stack flow \n"
-				" - parse custom rules to immediately block a unwanted behavior \n"
+                                "ePtracer is a process analyzer which is capable of: \n"
+                                "- tracing process system calls \n"
+                                "- dump process stack frame to get a full overview about process call stack flow \n"
 				"\n"
                                 "USAGE: ./eptracer [-p <process_name>] [-P <pid>] [-S -s -v]\n";
 

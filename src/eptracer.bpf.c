@@ -8,8 +8,8 @@
 #include "include/stack_tracing.h"
 #include "include/syscall_tracing.h"
 
-typedef unsigned int __u32;
-typedef unsigned long long __u64;
+// typedef unsigned int __u32;
+// typedef unsigned long long __u64;
 
 struct {
     __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
@@ -45,6 +45,7 @@ struct {
 } syscall_rb_map SEC(".maps");
 
 
+/* Workaround as bpf_strncmp not working*/
 static __always_inline __u32 str_equals(const char *s1, const char *s2, __u32 size)
 {
     int len = 0;
@@ -58,23 +59,14 @@ static __always_inline __u32 str_equals(const char *s1, const char *s2, __u32 si
     return 0;
 }
 
-/* Stack traces analysis using perf events */
-SEC("perf_event")
-int get_stacktrace(void *ctx)
+/* Checks if event's program name is the one we want to trace */
+static __always_inline __u32 is_target_program()
 {
-    int max_len = 0, max_buildid_len = 0, total_size = 0;
-    struct stack_trace_t *data = NULL;
-    char program_name[MAX_PROGRAM_STRING_LEN];
     const char *program_to_trace= NULL;
-    unsigned long pid_to_trace = 0;
-    __u32 key = 0, pid = 0, tgid = 0, prog_cmp_res = 0, processed_char = 0;
-    __u64 pid_tgid = 0;
- 
+    __u32 key = 0, processed_char = 0, pid = 0;
+    __u64 pid_tgid = 0, pid_to_trace = 0;
+    char program_name[MAX_PROGRAM_STRING_LEN];
 
-    data = bpf_map_lookup_elem(&stackdata_map, &key);
-    if (!data)
-        return 0;
- 	
     if (bpf_get_current_comm(&program_name, MAX_PROGRAM_STRING_LEN) < 0)
     {
         bpf_printk("[!] Error while getting process name");
@@ -88,10 +80,7 @@ int get_stacktrace(void *ctx)
         return 0;
     }
 
-    pid_tgid = bpf_get_current_pid_tgid();
-  	pid = pid_tgid >> 32; 
-	
-    // skip process if not identified by process name nor PID 
+    /* skip process if not identified by process name nor PID */
     if (str_equals(program_name, program_to_trace, sizeof(program_to_trace)) != 0)
     {
         processed_char = bpf_strtoul(program_to_trace, sizeof(program_to_trace), 10, &pid_to_trace);
@@ -99,10 +88,33 @@ int get_stacktrace(void *ctx)
             bpf_printk("bpf_strtoul: no valid digits were found or unsupported base was provided"); 
         if (processed_char == ERANGE)
             bpf_printk("bpf_strtoul: resulting value was out of range");  
+        pid_tgid = bpf_get_current_pid_tgid();
+        pid = pid_tgid >> 32; 
         if (pid_to_trace != pid)
             return 0;
+        else
+            return pid;
     }
+}
 
+/* Stack traces analysis using perf events */
+SEC("perf_event")
+int get_stacktrace(void *ctx)
+{
+    int max_len = 0, max_buildid_len = 0, total_size = 0;
+    struct stack_trace_t *data = NULL;
+    char program_name[MAX_PROGRAM_STRING_LEN];
+    __u32 key = 0, pid = 0, tgid = 0, prog_cmp_res = 0, processed_char = 0;
+    __u64 pid_tgid = 0, pid_to_trace = 0;
+
+    data = bpf_map_lookup_elem(&stackdata_map, &key);
+    if (!data)
+        return 0;
+     
+    pid = is_target_program();
+    if (!pid)
+        return 0;
+    
     max_len = MAX_STACK_RAWTP * sizeof(__u64);
     max_buildid_len = MAX_STACK_RAWTP * sizeof(struct bpf_stack_build_id);
     data->pid = pid;
@@ -136,8 +148,6 @@ int terminate_ptrace_based_debugger(struct trace_event_raw_sys_enter *ctx)
     bpf_send_signal(9);
     return 0;
 }
-
-
 
 SEC("tracepoint/syscalls/sys_enter_execve")
 int read_decode(struct syscall_execve_enter *ctx) 
@@ -222,9 +232,8 @@ int max_len = 0, max_buildid_len = 0, total_size = 0, i = 0;
 	struct raw_syscall_t *syscall_data = NULL; 
     char buf[256];
 
-    if (ctx->id != 0) {
+    if (ctx->id != 0)
         return 0;
-    }
 
     syscall_data = bpf_map_lookup_elem(&syscall_map, &key);
     if (!syscall_data)
@@ -236,26 +245,15 @@ int max_len = 0, max_buildid_len = 0, total_size = 0, i = 0;
     }
 
     program_to_trace = bpf_map_lookup_elem(&program_map, &key);
-    if (!program_to_trace) {
+    if (!program_to_trace) 
+    {
         bpf_printk("[!] Error while getting program to trace");
         return 0;
     }
-
-    pid_tgid = bpf_get_current_pid_tgid();
-  	pid = pid_tgid >> 32; 
-
-    // skip process if not identified by process name nor PID 
-    if (str_equals(program_name, program_to_trace, sizeof(program_to_trace)) != 0) {
-        processed_char = bpf_strtoul(program_to_trace, sizeof(program_to_trace), 10, &pid_to_trace);
-        if (processed_char == EINVAL) {
-            bpf_printk("bpf_strtoul: no valid digits were found or unsupported base was provided"); 
-        }
-        if (processed_char == ERANGE) {
-            bpf_printk("bpf_strtoul: resulting value was out of range");  
-        }
-        if (pid_to_trace != pid)
-            return 0;
-    }
+    
+    pid = is_target_program();
+    if (!pid)
+        return 0;
 
     tgid = pid_tgid & 0xffff;
     
@@ -267,14 +265,17 @@ int max_len = 0, max_buildid_len = 0, total_size = 0, i = 0;
         syscall_data->args[i] = ctx->args[i];
     }
     
-    // bpf_printk("	PID: 		%lu", pid);
-    // bpf_printk("	TGID: 		%lu", tgid);
-    // bpf_printk("	syscall id: 	%ld", syscall_data->syscall_id);
-    // bpf_printk("	args: 		(%s, %s, %s, %s, %s, %s)",  ctx->args[0], ctx->args[1], ctx->args[2], ctx->args[3], ctx->args[4], ctx->args[5]);
-    // 
-    // bpf_printk("	args: 		(%s, %d, %d, _, _, _)",  ctx->args[0], ctx->args[1], ctx->args[2]);
+    /* Is syscall being traced? 
+    bpf_printk("	PID: 		%lu", pid);
+    bpf_printk("	TGID: 		%lu", tgid);
+    bpf_printk("	syscall id: 	%ld", syscall_data->syscall_id);
+    bpf_printk("	args: 		(%s, %s, %s, %s, %s, %s)",  ctx->args[0], ctx->args[1], ctx->args[2], ctx->args[3], ctx->args[4], ctx->args[5]);
+    
+    bpf_printk("	args: 		(%s, %d, %d, _, _, _)",  ctx->args[0], ctx->args[1], ctx->args[2]);
+    */
 
-    if (bpf_ringbuf_output(&syscall_rb_map, syscall_data, sizeof(*syscall_data), 0) < 0) {
+    if (bpf_ringbuf_output(&syscall_rb_map, syscall_data, sizeof(*syscall_data), 0) < 0)
+    {
         bpf_printk("[!] Error while sending event to ring buffer");
         return 0;
     }
