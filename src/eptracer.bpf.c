@@ -8,9 +8,6 @@
 #include "include/stack_tracing.h"
 #include "include/syscall_tracing.h"
 
-// typedef unsigned int __u32;
-// typedef unsigned long long __u64;
-
 struct {
     __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
     __uint(max_entries, 2);
@@ -143,6 +140,7 @@ int get_stacktrace(void *ctx)
 SEC("tracepoint/syscalls/sys_enter_ptrace")
 int terminate_ptrace_based_debugger(struct trace_event_raw_sys_enter *ctx)
 {
+     
     bpf_printk("[+] ptrace has been called");
     // send kill signal to tracer process
     bpf_send_signal(9);
@@ -150,7 +148,7 @@ int terminate_ptrace_based_debugger(struct trace_event_raw_sys_enter *ctx)
 }
 
 SEC("tracepoint/syscalls/sys_enter_execve")
-int read_decode(struct syscall_execve_enter *ctx) 
+int execve_decode(struct syscall_execve_enter *ctx) 
 {
     const char *filename;
     const char **argv;
@@ -194,31 +192,56 @@ int read_decode(struct syscall_execve_enter *ctx)
 SEC("tracepoint/syscalls/sys_enter_write")
 int write_decode(struct trace_event_raw_sys_enter *ctx) 
 {
-    // unsigned int fd;
-    // const char *buf;
-    // size_t count;
-    // char buffer[MAX_BUF_SIZE] = {0};
-
-    // // Extract syscall arguments
-    // fd = ctx->fd;
-    // buf = (const char *)ctx->buf;
-    // count = ctx->count;
-
-    // // Limit read size to MAX_BUF_SIZE
-    // size_t to_read = count < MAX_BUF_SIZE ? count : MAX_BUF_SIZE;
-
-    // // Read user buffer safely
-    // bpf_probe_read_user(buffer, to_read, buf);
-
-    // // Print extracted information
-    // bpf_printk("write(fd=%d, count=%ld): %s", fd, count, buffer);
-
-    // return 0;
+    unsigned int fd;
+    size_t count;
+    char buf[MAX_BUF_SIZE + 1] = {0}; // +1 for null terminator
+    __u32 pid = 0;
     
-    // bpf_printk("write() triggered! args: %lx %lx %lx", ctx->args[0], ctx->args[1], ctx->args[2]);
+    pid = is_target_program();
+    if (!pid)
+        return 0;
+
+    // Extract syscall arguments
+    fd = ctx->args[0];
+    count = ctx->args[2];
+    
+    // Safety checks
+    if (count == 0) {
+        bpf_printk("write(fd=%d, count=0)", fd);
+        return 0;
+    }
+
+    // Limit read size
+    size_t to_read = count < MAX_BUF_SIZE ? count : MAX_BUF_SIZE;
+    
+    // Read user buffer safely
+    long ret = bpf_probe_read_user(buf, to_read, (void*)ctx->args[1]);
+    if (ret < 0) {
+        bpf_printk("write(fd=%d) error reading buffer: %ld", fd, ret);
+        return 0;
+    }
+    
+    // Ensure null termination (for string printing)
+    buf[to_read] = 0;
+    
+    // Print as hex if contains non-printable characters
+    int printable = 1;
+    for (int i = 0; i < to_read; i++) {
+        if (buf[i] < 32 || buf[i] > 126) {
+            printable = 0;
+            break;
+        }
+    }
+    
+    if (printable) {
+        bpf_printk("write(fd=%d, count=%lu): %s", fd, count, buf);
+    } else {
+        bpf_printk("write(fd=%d, count=%lu): %x", fd, count, buf);
+    }
+    
     return 0;
 }
-
+  
 /* System call monitoring */
 SEC("tracepoint/raw_syscalls/sys_enter")
 int profile(struct raw_syscalls_enter *ctx)
@@ -231,9 +254,6 @@ int max_len = 0, max_buildid_len = 0, total_size = 0, i = 0;
     __u64 pid_tgid = 0;
 	struct raw_syscall_t *syscall_data = NULL; 
     char buf[256];
-
-    if (ctx->id != 0)
-        return 0;
 
     syscall_data = bpf_map_lookup_elem(&syscall_map, &key);
     if (!syscall_data)

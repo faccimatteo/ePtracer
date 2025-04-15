@@ -1,0 +1,18 @@
+version: '3.8'
+
+services:
+  qemu:
+    image: multiarch/qemu-user-static
+    privileged: true
+    command: ["--credential", "yes", "--persistent", "yes"]
+    restart: unless-stopped
+
+  ubuntu:
+    image: ubuntu
+    platform: linux/arm64
+    volumes:
+      - /home/matteo/Documents/GitHub/eptracer:/eptracer
+    depends_on:
+      - qemu
+    
+

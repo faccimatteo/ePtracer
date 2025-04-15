@@ -19,6 +19,11 @@
 #include "tracers/syscall.c"
 #include "tracers/stacktrace.c"
 
+#define MAX_ARGS 100
+/* Max PID number is stated to be 4194304 (from sysctl -n kernel.pid_max) */
+#define MAX_PID_LEN 10
+#define MAX_STR_LEN 100
+
 extern int errno;
 static struct arguments args;
 static int log_level = LOG_DEBUG;
@@ -74,30 +79,121 @@ static int libbpf_print_fn(enum libbpf_print_level level, const char *format, va
 	return -1;
 }
 
-/*
- * get_process_identifier
+/* create_execvp_args
  *
  * Description:
- * Defines the process identifier that will be traced.  
+ * Parse program to trace and its and arguments from program arguments
+ * to build up execvp arguments.
+ *
+ * Params: 
+ * char *program: program string obtained from program agruments that will we used
+ * to instantiate the process to trace.
+ * char **execvp_file: execvp file
+ * char **execvp_argv
+ * */
+static void create_execvp_args(char *program, char **execvp_file, char **execvp_argv)
+{
+    unsigned int arg_count = 0;
+    
+    /* If target program passed as arguments does not contain any argument */
+    if (strstr(program, " ") == NULL) {
+        *execvp_file = program;
+        execvp_argv[0] = NULL;
+        return;
+    }
+    
+    /* Extract program name and its arguments */
+    char *token = strtok(program, " ");
+    while (token != NULL && arg_count < MAX_ARGS) {
+        execvp_argv[arg_count++] = token;
+        token = strtok(NULL, " ");
+    }
+    execvp_argv[arg_count] = NULL;
+    *execvp_file = execvp_argv[0];
+}
+
+/*
+ * get_PID_to_trace
+ *
+ * Description:
+ * Returns the process identifier of the process that will be traced.  
  *
  * Return:
- * Always use PID first.                      
- * Otherwise if cannot use PID, use process name.                         
- * Return NULL if no PID nor process name are defined.
+ * PID to trace.                      
+ * If -P flag is passed, spawn a process and get its PID.                         
+ * Return NULL if not able to attach to a valid PID.
  * 
  * */
-static char* get_process_identifier()
+char* get_PID_to_trace()
 {	
 	struct arguments *program_arguments = &args;
-	if (!program_arguments){
+    char *execvp_file = (char*)malloc(sizeof(char) * MAX_STR_LEN + 1);
+    char **execvp_argv = malloc(sizeof(char*) * MAX_ARGS + 1); 
+    char *pid_to_trace_str = (char*)malloc(sizeof(char) * MAX_PID_LEN + 1);
+    pid_t pid_to_trace;
+    pid_t process_to_spawn;
+    int pipe_fd[2];
+
+	if (!program_arguments) {
 		log_error("[!] Unexpected null program arguments.\n");
 		return NULL;
 	}
+    
 	if (program_arguments->process_pid && strlen(program_arguments->process_pid) != 0)
 		return program_arguments->process_pid;
-	if (program_arguments->process_name && strlen(program_arguments->process_name) != 0)
-		return program_arguments->process_name;
-	return NULL;
+                    
+	if (program_arguments->program && strlen(program_arguments->program) != 0) {
+        if (strlen(program_arguments->program) > MAX_STR_LEN) {
+            log_error("[!] Program length must be lower than %d!", MAX_STR_LEN);
+            exit(1);
+        }
+        create_execvp_args(program_arguments->program, &execvp_file, execvp_argv);
+        
+        if (pipe(pipe_fd) == -1) {
+            log_error("[!] Error while creating pipe");
+            exit(1);
+        }
+        log_debug("[+] Pipe created successfully");
+
+        process_to_spawn = fork();
+        switch(process_to_spawn) {
+        case -1:
+            log_error("[!] Cannot spawn process to trace! (fork error)");
+            exit(1);
+        case 0:
+            /* Communicating PID to trace to ePtracer */
+            close(pipe_fd[0]);
+            pid_to_trace = getpid();
+            if (write(pipe_fd[1], &pid_to_trace, sizeof(pid_to_trace)) < 0) {
+                log_error("[!] Error while sending PID to trace: %s", strerror(errno));
+                exit(1);
+            }
+            log_debug("[+] PID to trace successfully sent to ePtracer");
+            close(pipe_fd[1]);
+
+            if (execvp(execvp_file, execvp_argv) == -1) {
+                log_error("[!] Cannot spawn process to trace! (execvp error)");
+                exit(1);
+            }
+        default:
+            /* Reading tracer PID */
+            close(pipe_fd[1]);
+            if (read(pipe_fd[0], &pid_to_trace, sizeof(pid_to_trace)) < 0) {
+                log_error("[!] Error while receiving PID to trace: %s", strerror(errno));
+                exit(1);
+            } 
+
+            close(pipe_fd[0]);
+            log_debug("[+] PID to trace received: %d", pid_to_trace);
+
+            if (snprintf(pid_to_trace_str, MAX_PID_LEN, "%d", pid_to_trace) < 0) {
+                log_error("[!] Error while convering PID to trace");
+                exit(1);
+            }
+            return pid_to_trace_str;
+        }
+    }
+    return NULL;
 }
 
 /* 
@@ -108,7 +204,7 @@ static char* get_process_identifier()
  *
  * Params:
  * int fd: bpf map file descriptor for the current eptracer process.
- * char *process_identifier: process identifier obtained from get_process_identifier. 
+ * char *process_identifier: process identifier obtained from get_PID_to_trace. 
  * This can be a PID or a name of a process. Note that process name might not correspond
  * to process name listed from `ps -aux`. Said so, consider prefer PID over process name
  * as program identifier.
@@ -175,7 +271,7 @@ int main(int argc, char **argv)
 	int err = 0, num_cpus = 0, num_online_cpus = 0, i = 0, thread_index = 0, fd = 0;
 	struct stack_tracer_args stack_thread_arguments;
 	struct syscall_tracer_args syscall_thread_arguments;
-	char *process_id = NULL;
+	char *process_id = (char*)malloc(sizeof(char) * MAX_PID_LEN);
 	pthread_t threads[2];
 	pthread_t stack_tracer_thread;
 	pthread_t syscall_tracer_thread;
@@ -185,7 +281,7 @@ int main(int argc, char **argv)
 
 	args.log_file = "";
 	args.process_pid = "";
-	args.process_name = "";
+	args.program = "";
 	args.show_stacktrace = false;
 	args.show_syscall = false;
 	args.verbose = false;
@@ -242,11 +338,11 @@ int main(int argc, char **argv)
 			cleanup();
 	}		
 	log_debug("[+] BFP program correctly loaded\n");
-
 	log_debug("[+] Setting user process to trace...\n");
-	process_id = get_process_identifier();
+	process_id = get_PID_to_trace(process_id);
+    printf("PID_to_trace: %s", process_id);
 	if (!process_id || initialize_array(bpf_map__fd(skel->maps.program_map), process_id) < 0) {
-		log_error("[!] Error setting process to trace. Please make sure to specify one process to trace using PID or name identifier.\n");
+		log_error("[!] Error setting process to trace. Please make sure to specify one process to trace using PID or consider spawning a new one.\n");
 		cleanup();
 	}
 	log_debug("[+] Successfully tracing process %s", process_id);
@@ -262,8 +358,8 @@ int main(int argc, char **argv)
 	if (strncmp(args.process_pid, "", 1) != 0) {
 		log_debug("[+] PID: %s", args.process_pid);
 	}
-	if (strncmp(args.process_name, "", 1) != 0) {
-		log_debug("[+] Process Name: %s", args.process_name);
+	if (strncmp(args.program, "", 1) != 0) {
+		log_debug("[+] Process Name: %s", args.program);
 	}
 	log_debug("[+] Verbose: %d", args.verbose);
 	if (strncmp(args.log_file, "", 1) != 0) {

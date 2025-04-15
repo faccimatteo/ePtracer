@@ -208,7 +208,8 @@ void* syscall_tracer(void *syscall_tracer_arguments)
 	ring_buf = ring_buffer__new(bpf_map__fd(skel->maps.syscall_rb_map), syscall_event_handler, NULL, NULL);
 	if (!ring_buf) {
 		log_error("[!] Error creating ring buffer manager\n");
-		cleanup();
+		// cleanup();
+        exit(0);
 	}
 	log_debug("[+] Ring buffer successfully created\n");
 

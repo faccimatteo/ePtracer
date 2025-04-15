@@ -4,8 +4,8 @@
 /* Max string length used inside eBPF programs */
 #define MAX_LEN 128 
 
-/* Maximum redable buffer size by the write system */
-#define MAX_BUF_SIZE 128
+/* Maximum redable system calll buffer size */
+#define MAX_BUF_SIZE 32
 
 struct raw_syscall_t {
 	char *program_name;
