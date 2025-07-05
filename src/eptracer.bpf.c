@@ -147,6 +147,59 @@ int terminate_ptrace_based_debugger(struct trace_event_raw_sys_enter *ctx)
     return 0;
 }
 
+SEC("tracepoint/syscalls/sys_enter_read")
+int read_decode(struct trace_event_raw_sys_enter *ctx) 
+{
+    unsigned int fd;
+    size_t count;
+    char buf[MAX_BUF_SIZE + 1] = {0};
+    __u32 pid = 0;
+    
+    pid = is_target_program();
+    if (!pid)
+        return 0;
+
+    // Extract syscall arguments
+    fd = ctx->args[0];
+    count = ctx->args[2];
+    
+    // Safety checks
+    if (count == 0) {
+        bpf_printk("read(fd=%d, count=0)", fd);
+        return 0;
+    }
+
+    // Limit read size
+    size_t to_read = count < MAX_BUF_SIZE ? count : MAX_BUF_SIZE;
+    
+    // Read user buffer safely
+    long ret = bpf_probe_read_user(buf, to_read, (void*)ctx->args[1]);
+    if (ret < 0) {
+        bpf_printk("read(fd=%d) error reading buffer: %ld", fd, ret);
+        return 0;
+    }
+    
+    // Ensure null termination (for string printing)
+    buf[to_read] = 0;
+    
+    // Print as hex if contains non-printable characters
+    int printable = 1;
+    for (int i = 0; i < to_read; i++) {
+        if (buf[i] < 32 || buf[i] > 126) {
+            printable = 0;
+            break;
+        }
+    }
+    
+    if (printable) {
+        bpf_printk("read(fd=%d, count=%lu): %s", fd, count, buf);
+    } else {
+        bpf_printk("read(fd=%d, count=%lu): %x", fd, count, buf);
+    }
+    
+    return 0;
+}
+
 SEC("tracepoint/syscalls/sys_enter_execve")
 int execve_decode(struct syscall_execve_enter *ctx) 
 {
@@ -156,7 +209,12 @@ int execve_decode(struct syscall_execve_enter *ctx)
     char fname[MAX_LEN] = {0};
     char arg[MAX_LEN] = {0};
     int i = 0;
+    __u32 pid;
 
+    pid = is_target_program();
+    if (!pid)
+        return 0;
+    
     // Extract syscall arguments
     filename = (char *)ctx->argv[0];
     argv = (char **)ctx->argv[1];
@@ -189,12 +247,110 @@ int execve_decode(struct syscall_execve_enter *ctx)
     return 0;
 }
 
+SEC("tracepoint/syscalls/sys_enter_ioctl")
+int ioctl_decode(struct trace_event_raw_sys_enter *ctx)
+{
+    __u32 fd, cmd, pid;
+    __u64 arg;
+
+    pid = is_target_program();
+    if (!pid)
+        return 0;
+    
+    // Extract syscall arguments
+    fd = ctx->args[0];
+    cmd = ctx->args[1];
+    arg = ctx->args[2];
+
+    bpf_printk("ioctl(fd=%lu, cmd=%lu, arg=%lu)", fd, cmd, arg);
+    return 0;
+}
+
+SEC("tracepoint/syscalls/sys_enter_openat")
+int openat_decode(struct trace_event_raw_sys_enter *ctx)
+{
+    int dfd, flags, mode, pid;
+    char filename[MAX_BUF_SIZE + 1] = {0};
+
+    pid = is_target_program();
+    if (!pid)
+        return 0;
+
+    long ret = bpf_probe_read_user(filename, MAX_BUF_SIZE, (void*)ctx->args[1]);
+    if (ret < 0) {
+        bpf_printk("openat error reading buffer: %ld", ret);
+        return 0;
+    }
+    
+    // Ensure null termination (for string printing)
+    filename[MAX_BUF_SIZE] = 0;
+ 
+    // Extract syscall arguments
+    dfd = ctx->args[0];
+    flags = ctx->args[2];
+    mode = ctx->args[3];
+
+    bpf_printk("openat(dfd=%d, filename=%s, flags=%d, mode=%d)", dfd, filename, flags, mode);
+    return 0;
+}
+
+SEC("tracepoint/syscalls/sys_enter_open")
+int open_decode(struct trace_event_raw_sys_enter *ctx)
+{
+
+    __u32 flags, pid, mode;
+    char filename[MAX_BUF_SIZE + 1] = {0};
+    flags = ctx->args[1];
+    mode = ctx->args[2];
+
+    // Read user buffer safely
+    long ret = bpf_probe_read_user(filename, MAX_BUF_SIZE, (void*)ctx->args[0]);
+    if (ret < 0) {
+        bpf_printk("open error reading buffer: %ld", ret);
+        return 0;
+    }
+    
+    // Ensure null termination (for string printing)
+    filename[MAX_BUF_SIZE] = 0;
+    bpf_printk("open(filename=%s, flags=%lu, mode=%lu)", "", flags, mode);
+    return 0;
+}
+
+SEC("tracepoint/syscalls/sys_enter_mmap")
+int mmap_decode(struct trace_event_raw_sys_enter *ctx)
+{
+    __u32 pid;
+    __u64 addr, len, prot, flags, fd, off;
+
+    pid = is_target_program();
+    if (!pid)
+        return 0;
+
+    // Extract syscall arguments
+    addr = ctx->args[0];
+    len = ctx->args[1];
+    prot = ctx->args[2];
+    flags = ctx->args[3];
+    fd = ctx->args[4];
+    off = ctx->args[5];
+
+    bpf_printk("mmap(addr=0x%08lx, len=0x%08lx, prot=%lu, flags=%lu, fd=%lu, off=0x%08lx)", 
+            addr,
+            len,
+            prot,
+            flags,
+            fd,
+            off);
+    return 0;
+}
+
+
 SEC("tracepoint/syscalls/sys_enter_write")
 int write_decode(struct trace_event_raw_sys_enter *ctx) 
 {
     unsigned int fd;
     size_t count;
-    char buf[MAX_BUF_SIZE + 1] = {0}; // +1 for null terminator
+    char buf[MAX_BUF_SIZE + 1] = {0};
     __u32 pid = 0;
     
     pid = is_target_program();
@@ -246,7 +402,7 @@ int write_decode(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/raw_syscalls/sys_enter")
 int profile(struct raw_syscalls_enter *ctx)
 {
-int max_len = 0, max_buildid_len = 0, total_size = 0, i = 0;
+    int max_len = 0, max_buildid_len = 0, total_size = 0, i = 0;
     char program_name[MAX_PROGRAM_STRING_LEN];
     const char *program_to_trace;
     unsigned long pid_to_trace = 0;

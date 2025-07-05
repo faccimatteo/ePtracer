@@ -94,8 +94,10 @@ all: $(APPS)
 .PHONY: clean
 clean:
 	$(call msg,CLEAN)
-	$(Q)rm -rf $(OUTPUT) $(APPS)
+	$(shell rm -rf $(OUTPUT) $(APPS))
 	$(MAKE) -C $(LIBARGPARSE_SRC) clean
+	$(shell rm $(LIBLOG_SRC)/log.o $(LIBLOG_OBJ))
+	$(Q)cd $(LIBBLAZESYM_SRC)/capi && $(CARGO) clean
 	$(shell rm libbpf)
 
 # Build output dirs 

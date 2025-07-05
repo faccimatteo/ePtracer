@@ -44,7 +44,7 @@ void cleanup()
 		skel = NULL;
     }
     sleep(1);
-    printf("[+] Bye!\n");
+    printf("[+] Bye!");
     exit(0);
 }
 
@@ -135,7 +135,7 @@ char* get_PID_to_trace()
     int pipe_fd[2];
 
 	if (!program_arguments) {
-		log_error("[!] Unexpected null program arguments.\n");
+		log_error("[!] Unexpected null program arguments.");
 		return NULL;
 	}
     
@@ -227,7 +227,7 @@ static int initialize_array(int fd, char *process_identifier)
 	__u32 i = 0;
 
 	if (strlen(process_identifier) > MAX_PROGRAM_STRING_LEN) {
-		log_error("[!] Specified program identifier exceeds program max length.\n");
+		log_error("[!] Specified program identifier exceeds program max length.");
 		return -1;
 	}
 
@@ -255,11 +255,11 @@ static int initialize_array(int fd, char *process_identifier)
  * */
 static struct eptracer_bpf* load_BPF_program() 
 {
-	log_debug("[+] Loading BPF program into kernel...\n");
+	log_debug("[+] Loading BPF program into kernel...");
 	if (!skel) {
 		skel = eptracer_bpf__open_and_load();
 	} else {
-		log_debug("[+] Using already loaded BPF program\n");
+		log_debug("[+] Using already loaded BPF program");
 	}
 	return skel;	
 }
@@ -289,21 +289,21 @@ int main(int argc, char **argv)
 	/* Getting number of online cpus */
 	err = parse_cpu_mask_file(online_cpus_file, &online_mask, &num_online_cpus);
 	if (err) {
-		log_error("[!] Failed to parse cpus number\n");
+		log_error("[!] Failed to parse cpus number");
 		return 1;	
 	}
 
 	/* Getting number of usable cpus */
 	num_cpus = libbpf_num_possible_cpus();
 	if (num_cpus <= 0) {
-		log_error("[!] Fail to get the number of processors\n");
+		log_error("[!] Fail to get the number of processors");
 		return 1;
 	}
 	
 	/* Parsing command line arguments */
 	err = argp_parse(&argp, argc, argv, 0, 0, &args);
 	if (err) {
-		log_error("[!] Error parsing program arguments\n");
+		log_error("[!] Error parsing program arguments");
 		return 1;
 	}
 
@@ -311,11 +311,11 @@ int main(int argc, char **argv)
 	if (strlen(args.log_file) != 0) {
 		f = fopen(args.log_file, "w+");
 		if (!f) {
-			log_error("[!] Failed to create logging file\n");
+			log_error("[!] Failed to create logging file");
 			return 1;	
 		} else {
 			if (log_add_fp(f, log_level) < 0) {
-				log_error("[!] Failed to add logging file\n");
+				log_error("[!] Failed to add logging file");
 				return 1;
 			} else {
 				log_debug("[+] Successfully added logging file %s", args.log_file);
@@ -328,33 +328,33 @@ int main(int argc, char **argv)
 		printf("[+] Logging ePtracer into: %s", args.log_file);
 	}
 	if (libbpf_set_print(libbpf_print_fn) < 0) {
-		printf("[!] Failed to initialize ePtracer in logging mode.\n");
+		printf("[!] Failed to initialize ePtracer in logging mode.");
 	};
 	
 	/* Get BPF skeleton to manage BPF objects in a easier way */
 	skel = load_BPF_program();
 	if (!skel) {
-			log_error("[!] Error opening and loading BPF file\n");
+			log_error("[!] Error opening and loading BPF file");
 			cleanup();
 	}		
-	log_debug("[+] BFP program correctly loaded\n");
-	log_debug("[+] Setting user process to trace...\n");
+	log_debug("[+] BFP program correctly loaded");
+	log_debug("[+] Setting user process to trace...");
 	process_id = get_PID_to_trace(process_id);
     printf("PID_to_trace: %s", process_id);
 	if (!process_id || initialize_array(bpf_map__fd(skel->maps.program_map), process_id) < 0) {
-		log_error("[!] Error setting process to trace. Please make sure to specify one process to trace using PID or consider spawning a new one.\n");
+		log_error("[!] Error setting process to trace. Please make sure to specify one process to trace using PID or consider spawning a new one.");
 		cleanup();
 	}
 	log_debug("[+] Successfully tracing process %s", process_id);
 
-	log_debug("[+] Attaching to BPF program...\n");
+	log_debug("[+] Attaching to BPF program...");
 	errno = eptracer_bpf__attach(skel);
 	if (errno) { 
-		log_error( "[!] Error finding BPF program\n");
+		log_error( "[!] Error finding BPF program");
 		cleanup();
 	}
 
-	log_debug("[+] Successfully attached to BFP program\n");
+	log_debug("[+] Successfully attached to BFP program");
 	if (strncmp(args.process_pid, "", 1) != 0) {
 		log_debug("[+] PID: %s", args.process_pid);
 	}
@@ -365,7 +365,7 @@ int main(int argc, char **argv)
 	if (strncmp(args.log_file, "", 1) != 0) {
 		log_debug("[+] Log file: %s", args.log_file);
 	} else {
-		log_debug("[+] No logging file specified, logging into stdout\n");
+		log_debug("[+] No logging file specified, logging into stdout");
 	}
 	    
     /* Choosing fd where to log stack events */
@@ -375,7 +375,7 @@ int main(int argc, char **argv)
 		fd = fileno(stdout);
 
 	if (fd < 0) {
-		log_error("[!] Failed to get file descriptor from stdio stream.\n");
+		log_error("[!] Failed to get file descriptor from stdio stream.");
 	}	
 
 	if (args.show_stacktrace) {
@@ -386,7 +386,7 @@ int main(int argc, char **argv)
 
 		/* Creating thread that will handle communication with stack tracer BPF program */	
 		if (pthread_create(&stack_tracer_thread, NULL, stack_tracer, (void*) &stack_thread_arguments)) {
-			log_error("[!] Failed to create stack tracer thread.\n");
+			log_error("[!] Failed to create stack tracer thread.");
 			cleanup();
 		}
 		threads[thread_index++] = stack_tracer_thread;
@@ -396,14 +396,14 @@ int main(int argc, char **argv)
 	    syscall_thread_arguments.skel = skel;
 		/* Creating thread that will handle communication with syscall tracer BPF program */	
 		if (pthread_create(&syscall_tracer_thread, NULL, syscall_tracer, (void*) &syscall_thread_arguments)) {
-			log_error("[!] Failed to create syscall tracer thread.\n");
+			log_error("[!] Failed to create syscall tracer thread.");
 			cleanup();
 		}
 		threads[thread_index++] = syscall_tracer_thread;
 	}
 
 	if (!args.show_stacktrace && !args.show_syscall) {
-		printf("[?] ePtracer is not tracing any event. To trace events, take a look at the usage using --help\n");
+		printf("[?] ePtracer is not tracing any event. To trace events, take a look at the usage using --help");
         return 0;
 	}
   
