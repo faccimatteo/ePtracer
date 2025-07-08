@@ -53,3 +53,11 @@ struct syscall_enter {
     unsigned char r8;
     unsigned char r9;
 };
+
+/* structure to send argument to stack_tracer thread */
+struct syscall_tracer_args 
+{
+	struct eptracer_bpf *skel; 
+};
+
+void *syscall_tracer(void *syscall_tracer_arguments);

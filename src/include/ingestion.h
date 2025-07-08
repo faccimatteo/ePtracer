@@ -1,0 +1,1 @@
+int ingest(const char *syscall_event);

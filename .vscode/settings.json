@@ -1,0 +1,13 @@
+{
+    "files.associations": {
+        "eptracer.skel.h": "c",
+        "stack_tracing.h": "c",
+        "resource.h": "c",
+        "sysinfo.h": "c",
+        "syscall_tracing.h": "c",
+        "stdlib.h": "c",
+        "log.h": "c",
+        "limits": "c",
+        "numbers": "c"
+    }
+}

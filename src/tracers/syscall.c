@@ -3,14 +3,14 @@
 #include <time.h>
 #include <sys/resource.h>
 #include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "../include/ingestion.h"
+#include "../collector/victoriametrics/ingestion.c"
+
 
 static struct ring_buffer *ring_buf = NULL;
-
-/* structure to send argument to stack_tracer thread */
-struct syscall_tracer_args 
-{
-	struct eptracer_bpf *skel; 
-};
 
 /**
  * decode_syscall
@@ -158,6 +158,7 @@ void decode_syscall(const __u64 syscall_number, const void *args[6])
 		default:
 			// printf("Failed to parse syscall number: %lx", syscall_number);
 			printf("syscall (%lx, %lx, %lx, %lx, %lx, %lx)\n", args[0], args[1], args[2], args[3], args[4], args[5]);
+			break;
 	}
 }
 
@@ -177,25 +178,29 @@ void decode_syscall(const __u64 syscall_number, const void *args[6])
  * */
 static int syscall_event_handler(void *ctx, void *data, size_t size)
 {
-	const struct raw_syscall_t *e = data;
+	//const struct raw_syscall_t *e = data;
 	struct tm *tm;
 	char ts[32];
 	time_t t;
+	struct timespec t_spec;
+    clock_gettime(CLOCK_REALTIME, &t_spec);
+    
+    long microseconds = t_spec.tv_sec * 1000000 + t_spec.tv_nsec / 1000;
+	char metric [256];
 	
 	time(&t);
+	printf("Time_ms ->  %ld\n", microseconds);
 	tm = localtime(&t);
 	strftime(ts, sizeof(ts), "%H:%M:%S", tm);
 
+	
 	printf("Time ->  %-8s\n", ts);
-	printf("Syscall ID -> %ld\n", e->syscall_id);
-	printf("PID -> %lu\n", e->pid);
-	printf("TGID -> %lu\n", e->tgid);
-	decode_syscall(e->syscall_id, e->args);
+	snprintf(metric, strlen((char*) data) + 17, "%s%ld", (char*) data, microseconds);
+	printf("metric: %s\n", metric);
 	printf("--------------------------------------------------------------\n");
+	ingest(metric);
 	return 0;
 }
-
-void *syscall_tracer(void *syscall_tracer_arguments);
 
 void* syscall_tracer(void *syscall_tracer_arguments)
 {

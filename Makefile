@@ -16,6 +16,39 @@ BPFTOOL_SRC 		:= $(abspath ./bpftool/src)
 LIBBPF_OBJ 			:= $(abspath $(OUTPUT)/libbpf.a)
 BPFTOOL_OUTPUT 		?= $(abspath $(OUTPUT)/bpftool)
 BPFTOOL 			?= $(BPFTOOL_OUTPUT)/bootstrap/bpftool
+LDLIBS				?= 	-L/usr/lib/x86_64-linux-gnu/			\
+						-L/usr/lib/x86_64-linux-gnu/mit-krb5/	\
+						-L/lib/x86_64-linux-gnu/				\
+						-lcurl			\
+						-lnghttp2		\
+						-lidn2			\
+						-lrtmp			\
+						-lssh			\
+						-lpsl			\
+						-lssl			\
+						-lcrypto		\
+						-lzstd			\
+						-lz				\
+						-lgnutls		\
+						-lsasl2			\
+						-ltasn1			\
+						-lffi			\
+						-lbrotlidec		\
+						-lldap			\
+						-llber			\
+						/usr/lib/x86_64-linux-gnu/mit-krb5/libgssapi_krb5.so	\
+						/usr/lib/x86_64-linux-gnu/libkrb5.so					\
+						/usr/lib/x86_64-linux-gnu/libk5crypto.so				\
+						-lzstd			\
+						-lutil			\
+						-lrt			\
+						-lpthread		\
+						-lm				\
+						-ldl			\
+						-lc				\
+						-lelf			\
+						-lz
+
 # CROSS_COMPILE		?= "" 
 ARCH 				?= $(shell uname -m | sed 's/x86_64/x86/' \
 	 				   	 | sed 's/arm.*/arm/' \
@@ -40,13 +73,11 @@ CFLAGS 				:= -O2 -Wall -Wformat -Wformat=2 -Wconversion -Wimplicit-fallthrough 
 						-Wl,-z,nodlopen -Wl,-z,noexecstack \
 						-Wl,-z,relro -Wl,-z,now \
 						-Wl,--as-needed -Wl,--no-copy-dt-needed-entries
-ALL_LDFLAGS 		:= $(LDFLAGS) $(EXTRA_LDFLAGS) -static
+ALL_LDFLAGS 		:= $(LDFLAGS) $(EXTRA_LDFLAGS) $(LDLIBS)
 
 APPS 				= eptracer 
 
 CARGO 				?= $(shell which cargo)
-
-ALL_LDFLAGS 		+= -lzstd -lutil -lrt -lpthread -lm -ldl -lc
 
 ifeq ($(strip $(CARGO)),)
 BZS_APPS :=
@@ -176,4 +207,4 @@ $(BZS_APPS): $(LIBBLAZESYM_OBJ)
 # Build application binary
 $(APPS): %: $(OUTPUT)/%.o $(LIBBPF_OBJ) $(LIBBLAZESYM_OBJ) $(LIBARGPARSE_OBJ) $(LIBLOG_OBJ) | $(OUTPUT)
 	$(call msg,BINARY,$@)
-	$(Q)$(CC) $^ $(ALL_LDFLAGS) -g3 -lelf -lz -o $@ 
+	$(Q)$(CC) $^ $(ALL_LDFLAGS) -g3 -o $@ 
