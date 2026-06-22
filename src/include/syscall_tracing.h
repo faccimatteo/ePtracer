@@ -61,3 +61,18 @@ struct syscall_tracer_args
 };
 
 void *syscall_tracer(void *syscall_tracer_arguments);
+
+enum syscall_event_type {
+    EVENT_PTRACE, EVENT_READ, EVENT_EXECVE, EVENT_FORK, EVENT_CLONE, EVENT_MPROTECT,
+    EVENT_OPENAT, EVENT_MMAP, EVENT_WRITE, EVENT_CHOWN, EVENT_MOUNT, EVENT_UMOUNT,
+    EVENT_IOCTL, EVENT_SETUID, EVENT_SETGID, EVENT_CAPSET, EVENT_PRCTL, EVENT_KEYCTL
+};
+
+struct syscall_event_t {
+    enum syscall_event_type type;
+    int pid;
+    __u64 args[6];
+    char str1[MAX_BUF_SIZE + 1];
+    char str2[MAX_BUF_SIZE + 1];
+    char str3[MAX_BUF_SIZE + 1];
+};

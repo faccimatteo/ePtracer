@@ -160,13 +160,16 @@ int get_stacktrace(void *ctx)
 SEC("tracepoint/syscalls/sys_enter_ptrace")
 int terminate_ptrace_based_debugger(struct trace_event_raw_sys_enter *ctx)
 {
+    struct syscall_event_t *ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+    if (!ev) return 0;
 
-    char *str_out = bpf_ringbuf_reserve(&syscall_rb_map, 100, 0);
-    if (!str_out) return 0;
-
-    BPF_SNPRINTF(str_out, 100, "eptracer{pid=\"%d\", syscall=\"ptrace\", request=\"%d\", pid=\"%d\", addr=\"%p\", data=\"%p\"} ", (int)ctx->args[1], 
-                (int)ctx->args[0], (int)ctx->args[1], (void*)ctx->args[2], (void*)ctx->args[3]);
-    bpf_ringbuf_submit(str_out, 0);
+    ev->type = EVENT_PTRACE;
+    ev->pid = (int)ctx->args[1];
+    ev->args[0] = ctx->args[0];
+    ev->args[1] = ctx->args[1];
+    ev->args[2] = ctx->args[2];
+    ev->args[3] = ctx->args[3];
+    bpf_ringbuf_submit(ev, 0);
     
     //Terminate debugger sending SIG_KILL
     bpf_send_signal(9);
@@ -176,41 +179,43 @@ int terminate_ptrace_based_debugger(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_enter_read")
 int read_decode(struct trace_event_raw_sys_enter *ctx) 
 {
-    
     int pid = is_target_program();
     if (!pid) return 0;
 
-    char *str_out = bpf_ringbuf_reserve(&syscall_rb_map, 100, 0);
-    if (!str_out) return 0;
+    struct syscall_event_t *ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+    if (!ev) return 0;
 
-    BPF_SNPRINTF(str_out, 100, "eptracer{pid=\"%d\", syscall=\"read\", fd=\"%d\", buf=\"%p\", count=\"%lu\"} ", pid,
-                (int)ctx->args[0], (void*)ctx->args[1], (unsigned long)ctx->args[2]);
-    bpf_ringbuf_submit(str_out, 0);
+    ev->type = EVENT_READ;
+    ev->pid = pid;
+    ev->args[0] = ctx->args[0];
+    ev->args[1] = ctx->args[1];
+    ev->args[2] = ctx->args[2];
+    bpf_ringbuf_submit(ev, 0);
     return 0;
 }
 
 SEC("tracepoint/syscalls/sys_enter_execve")
 int execve_decode(struct trace_event_raw_sys_enter *ctx) 
 {
-    
     int pid = is_target_program();
     if (!pid) return 0;
 
-    const int size = 150;
-    char *str_out = bpf_ringbuf_reserve(&syscall_rb_map, size, 0);
-    if (!str_out) return 0;
+    struct syscall_event_t *ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+    if (!ev) return 0;
 
-    char filename[MAX_BUF_SIZE + 1] = {0};
-    long ret = bpf_probe_read_user(filename, MAX_BUF_SIZE, (void*)ctx->args[0]);
+    ev->type = EVENT_EXECVE;
+    ev->pid = pid;
+    ev->args[1] = ctx->args[1];
+    ev->args[2] = ctx->args[2];
+
+    long ret = bpf_probe_read_user(ev->str1, MAX_BUF_SIZE, (void*)ctx->args[0]);
     if (ret < 0) {
-        bpf_ringbuf_discard(str_out, 0);
+        bpf_ringbuf_discard(ev, 0);
         return 0;
     }
-    filename[MAX_BUF_SIZE] = 0;
+    ev->str1[MAX_BUF_SIZE] = 0;
 
-    BPF_SNPRINTF(str_out, size, "eptracer{pid=\"%d\", syscall=\"execve\", filename=\"%s\", argv=\"%p\", envp=\"%p\"}", pid,
-                filename, (void*)ctx->args[1], (void*)ctx->args[2]);
-    bpf_ringbuf_submit(str_out, 0);
+    bpf_ringbuf_submit(ev, 0);
     
     return 0;
 }
@@ -218,15 +223,15 @@ int execve_decode(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_enter_fork")
 int fork_decode(struct trace_event_raw_sys_enter *ctx) 
 {
-    
     int pid = is_target_program();
     if (!pid) return 0;
 
-    char *str_out = bpf_ringbuf_reserve(&syscall_rb_map, 50, 0);
-    if (!str_out) return 0;
+    struct syscall_event_t *ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+    if (!ev) return 0;
 
-    BPF_SNPRINTF(str_out, 50, "eptracer{pid=\"%d\", syscall=\"fork\"} ", pid);
-    bpf_ringbuf_submit(str_out, 0);
+    ev->type = EVENT_FORK;
+    ev->pid = pid;
+    bpf_ringbuf_submit(ev, 0);
     
     return 0;
 }
@@ -234,16 +239,19 @@ int fork_decode(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_enter_clone")
 int clone_decode(struct trace_event_raw_sys_enter *ctx) 
 {
-    
     int pid = is_target_program();
     if (!pid) return 0;
 
-    char *str_out = bpf_ringbuf_reserve(&syscall_rb_map, 100, 0);
-    if (!str_out) return 0;
+    struct syscall_event_t *ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+    if (!ev) return 0;
 
-    BPF_SNPRINTF(str_out, 100, "eptracer{pid=\"%d\", syscall=\"clone\", flags=\"%lx\", child_stack=\"%p\", parent_tid=\"%p\", child_tid=\"%p\"} ", pid,
-                ctx->args[0], (void*)ctx->args[1], (void*)ctx->args[2], (void*)ctx->args[3]);
-    bpf_ringbuf_submit(str_out, 0);
+    ev->type = EVENT_CLONE;
+    ev->pid = pid;
+    ev->args[0] = ctx->args[0];
+    ev->args[1] = ctx->args[1];
+    ev->args[2] = ctx->args[2];
+    ev->args[3] = ctx->args[3];
+    bpf_ringbuf_submit(ev, 0);
     
     return 0;
 }
@@ -251,16 +259,18 @@ int clone_decode(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_enter_mprotect")
 int mprotect_decode(struct trace_event_raw_sys_enter *ctx) 
 {
-    
     int pid = is_target_program();
     if (!pid) return 0;
 
-    char *str_out = bpf_ringbuf_reserve(&syscall_rb_map, 100, 0);
-    if (!str_out) return 0;
+    struct syscall_event_t *ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+    if (!ev) return 0;
 
-    BPF_SNPRINTF(str_out, 100, "eptracer{pid=\"%d\", syscall=\"mprotect\", addr=\"%p\", len=\"%lu\", prot=\"%d\"} ", pid, 
-                (void*)ctx->args[0], (unsigned long)ctx->args[1], (int)ctx->args[2]);
-    bpf_ringbuf_submit(str_out, 0);
+    ev->type = EVENT_MPROTECT;
+    ev->pid = pid;
+    ev->args[0] = ctx->args[0];
+    ev->args[1] = ctx->args[1];
+    ev->args[2] = ctx->args[2];
+    bpf_ringbuf_submit(ev, 0);
     
     return 0;
 }
@@ -268,37 +278,26 @@ int mprotect_decode(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_enter_openat")
 int openat_decode(struct trace_event_raw_sys_enter *ctx)
 {
-    int dfd, flags, mode, pid;
-    char filename[MAX_BUF_SIZE + 1] = {0};
-    __u32 key = 0, tgid = 0;
-    struct raw_syscall_t *syscall_data = NULL;
-    char *str_out = NULL; // Initialize to NULL
+    int pid = is_target_program();
+    if (!pid) return 0;
 
-    pid = is_target_program();
-    if (!pid)
-        return 0;
+    struct syscall_event_t *ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+    if (!ev) return 0;
 
-    const int size = 100;
-    str_out = bpf_ringbuf_reserve(&syscall_rb_map, size, 0);
-    if (!str_out)
-        return 0;
-
-    long ret = bpf_probe_read_user(filename, MAX_BUF_SIZE, (void*)ctx->args[1]);
+    long ret = bpf_probe_read_user(ev->str1, MAX_BUF_SIZE, (void*)ctx->args[1]);
     if (ret < 0) {
-        bpf_printk("openat error reading buffer: %ld", ret);
-        bpf_ringbuf_discard(str_out, 0); // Release on error
+        bpf_ringbuf_discard(ev, 0);
         return 0;
     }
-    
-    filename[MAX_BUF_SIZE] = 0;
- 
-    dfd = ctx->args[0];
-    flags = ctx->args[2];
-    mode = ctx->args[3];
+    ev->str1[MAX_BUF_SIZE] = 0;
 
-    BPF_SNPRINTF(str_out, size, "eptracer{pid=\"%d\", syscall=\"openat\", fd=\"%d\", filename=\"%s\", flags=\"%d\", mode=\"%d\"} ", pid,
-                dfd, filename, flags, mode);
-    bpf_ringbuf_submit(str_out, 0);
+    ev->type = EVENT_OPENAT;
+    ev->pid = pid;
+    ev->args[0] = ctx->args[0]; // dfd
+    ev->args[2] = ctx->args[2]; // flags
+    ev->args[3] = ctx->args[3]; // mode
+
+    bpf_ringbuf_submit(ev, 0);
     
     return 0;
 }
@@ -330,14 +329,19 @@ int mmap_decode(struct trace_event_raw_sys_enter *ctx) {
     int pid = is_target_program();
     if (!pid) return 0;
 
-    char *str_out = bpf_ringbuf_reserve(&syscall_rb_map, 150, 0);
-    if (!str_out) return 0;
+    struct syscall_event_t *ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+    if (!ev) return 0;
 
-    BPF_SNPRINTF(str_out, 150, "eptracer{pid=\"%d\", syscall=\"mmap\", addr=\"%p\", length=\"%lu\", prot=\"%d\", flags=\"%d\", fd=\"%d\", off=\"%lu\"} ", pid,
-                (void*)ctx->args[0], (unsigned long)ctx->args[1], (int)ctx->args[2],
-                (int)ctx->args[3], (int)ctx->args[4], (unsigned long)ctx->args[5]);
-    bpf_ringbuf_submit(str_out, 0);
-    
+    ev->type = EVENT_MMAP;
+    ev->pid = pid;
+    ev->args[0] = ctx->args[0];
+    ev->args[1] = ctx->args[1];
+    ev->args[2] = ctx->args[2];
+    ev->args[3] = ctx->args[3];
+    ev->args[4] = ctx->args[4];
+    ev->args[5] = ctx->args[5];
+
+    bpf_ringbuf_submit(ev, 0);
     return 0;
 }
 
@@ -345,16 +349,18 @@ int mmap_decode(struct trace_event_raw_sys_enter *ctx) {
 SEC("tracepoint/syscalls/sys_enter_write")
 int write_decode(struct trace_event_raw_sys_enter *ctx) 
 {
-    
     int pid = is_target_program();
     if (!pid) return 0;
 
-    char *str_out = bpf_ringbuf_reserve(&syscall_rb_map, 100, 0);
-    if (!str_out) return 0;
+    struct syscall_event_t *ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+    if (!ev) return 0;
 
-    BPF_SNPRINTF(str_out, 100, "eptracer{pid=\"%d\", syscall=\"write\", fd=\"%d\", buf=\"%p\", count=\"%lu\"} ", pid,
-                (int)ctx->args[0], (void*)ctx->args[1], (unsigned long)ctx->args[2]);
-    bpf_ringbuf_submit(str_out, 0);
+    ev->type = EVENT_WRITE;
+    ev->pid = pid;
+    ev->args[0] = ctx->args[0];
+    ev->args[1] = ctx->args[1];
+    ev->args[2] = ctx->args[2];
+    bpf_ringbuf_submit(ev, 0);
     
     return 0;
 }
@@ -362,24 +368,24 @@ int write_decode(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_enter_chown")
 int chown_decode(struct trace_event_raw_sys_enter *ctx) 
 {
-    
     int pid = is_target_program();
     if (!pid) return 0;
 
-    char filename[MAX_BUF_SIZE + 1] = {0};
-    long ret = bpf_probe_read_user(filename, MAX_BUF_SIZE, (void*)ctx->args[0]);
+    struct syscall_event_t *ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+    if (!ev) return 0;
+
+    long ret = bpf_probe_read_user(ev->str1, MAX_BUF_SIZE, (void*)ctx->args[0]);
     if (ret < 0) {
-        bpf_printk("chown error reading filename");
+        bpf_ringbuf_discard(ev, 0);
         return 0;
     }
-    filename[MAX_BUF_SIZE] = 0;
+    ev->str1[MAX_BUF_SIZE] = 0;
 
-    char *str_out = bpf_ringbuf_reserve(&syscall_rb_map, 100, 0);
-    if (!str_out) return 0;
-
-    BPF_SNPRINTF(str_out, 100, "eptracer{pid=\"%d\", syscall=\"chown\", filename=\"%s\", uid=\"%d\", gid=\"%d\"} ", pid,
-                filename, (int)ctx->args[1], (int)ctx->args[2]);
-    bpf_ringbuf_submit(str_out, 0);
+    ev->type = EVENT_CHOWN;
+    ev->pid = pid;
+    ev->args[1] = ctx->args[1]; // uid
+    ev->args[2] = ctx->args[2]; // gid
+    bpf_ringbuf_submit(ev, 0);
     
     return 0;
 }
@@ -387,26 +393,24 @@ int chown_decode(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_enter_mount")
 int mount_decode(struct trace_event_raw_sys_enter *ctx) 
 {
-    
     int pid = is_target_program();
     if (!pid) return 0;
 
-    char source[MAX_BUF_SIZE + 1] = {0};
-    char target[MAX_BUF_SIZE + 1] = {0};
-    char fstype[MAX_BUF_SIZE + 1] = {0};
+    struct syscall_event_t *ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+    if (!ev) return 0;
 
-    bpf_probe_read_user(source, MAX_BUF_SIZE, (void*)ctx->args[0]);
-    bpf_probe_read_user(target, MAX_BUF_SIZE, (void*)ctx->args[1]);
-    bpf_probe_read_user(fstype, MAX_BUF_SIZE, (void*)ctx->args[2]);
+    bpf_probe_read_user(ev->str1, MAX_BUF_SIZE, (void*)ctx->args[0]);
+    bpf_probe_read_user(ev->str2, MAX_BUF_SIZE, (void*)ctx->args[1]);
+    bpf_probe_read_user(ev->str3, MAX_BUF_SIZE, (void*)ctx->args[2]);
 
-    source[MAX_BUF_SIZE] = target[MAX_BUF_SIZE] = fstype[MAX_BUF_SIZE] = 0;
+    ev->str1[MAX_BUF_SIZE] = ev->str2[MAX_BUF_SIZE] = ev->str3[MAX_BUF_SIZE] = 0;
 
-    char *str_out = bpf_ringbuf_reserve(&syscall_rb_map, 200, 0);
-    if (!str_out) return 0;
+    ev->type = EVENT_MOUNT;
+    ev->pid = pid;
+    ev->args[3] = ctx->args[3]; // flags
+    ev->args[4] = ctx->args[4]; // data
 
-    BPF_SNPRINTF(str_out, 200, "eptracer{pid=\"%d\", syscall=\"mount\", source=\"%s\", target=\"%s\", fstype=\"%s\", flags=\"%lx\", data=\"%p\"} ", pid,
-                source, target, fstype, (unsigned long)ctx->args[3], (void*)ctx->args[4]);
-    bpf_ringbuf_submit(str_out, 0);
+    bpf_ringbuf_submit(ev, 0);
     
     return 0;
 }
@@ -414,24 +418,24 @@ int mount_decode(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_enter_umount")
 int umount_decode(struct trace_event_raw_sys_enter *ctx)
 {
-    
     int pid = is_target_program();
     if (!pid) return 0;
 
-    char target[MAX_BUF_SIZE + 1] = {0};
-    long ret = bpf_probe_read_user(target, MAX_BUF_SIZE, (void*)ctx->args[0]);
+    struct syscall_event_t *ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+    if (!ev) return 0;
+
+    long ret = bpf_probe_read_user(ev->str1, MAX_BUF_SIZE, (void*)ctx->args[0]);
     if (ret < 0) {
-        bpf_printk("umount error reading target");
+        bpf_ringbuf_discard(ev, 0);
         return 0;
     }
-    target[MAX_BUF_SIZE] = 0;
+    ev->str1[MAX_BUF_SIZE] = 0;
 
-    char *str_out = bpf_ringbuf_reserve(&syscall_rb_map, 100, 0);
-    if (!str_out) return 0;
+    ev->type = EVENT_UMOUNT;
+    ev->pid = pid;
+    ev->args[1] = ctx->args[1];
 
-    BPF_SNPRINTF(str_out, 100, "eptracer{pid=\"%d\", syscall=\"umount\", target=\"%s\", flags=\"%d\"}", pid,
-                target, (int)ctx->args[1]);
-    bpf_ringbuf_submit(str_out, 0);
+    bpf_ringbuf_submit(ev, 0);
     
     return 0;
 }
@@ -440,7 +444,6 @@ int umount_decode(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_enter_ioctl")
 int binder_ioctl_decode(struct trace_event_raw_sys_enter *ctx) 
 {
-    
     int pid = is_target_program();
     if (!pid) return 0;
 
@@ -453,12 +456,15 @@ int binder_ioctl_decode(struct trace_event_raw_sys_enter *ctx)
             return 0;
     #endif
 
-    char *str_out = bpf_ringbuf_reserve(&syscall_rb_map, 150, 0);
-    if (!str_out) return 0;
+    struct syscall_event_t *ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+    if (!ev) return 0;
 
-    BPF_SNPRINTF(str_out, 150, "eptracer{pid=\"%d\", syscall=\"binder_ioctl\", fd=\"%d\", cmd=\"%lu\", arg=\"%lu\"} ", pid, 
-                fd, cmd, (unsigned long)ctx->args[2]);
-    bpf_ringbuf_submit(str_out, 0);
+    ev->type = EVENT_IOCTL;
+    ev->pid = pid;
+    ev->args[0] = ctx->args[0];
+    ev->args[1] = ctx->args[1];
+    ev->args[2] = ctx->args[2];
+    bpf_ringbuf_submit(ev, 0);
     
     return 0;
 }
@@ -467,15 +473,16 @@ int binder_ioctl_decode(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_enter_setuid")
 int setuid_decode(struct trace_event_raw_sys_enter *ctx) 
 {
-    
     int pid = is_target_program();
     if (!pid) return 0;
 
-    char *str_out = bpf_ringbuf_reserve(&syscall_rb_map, 80, 0);
-    if (!str_out) return 0;
+    struct syscall_event_t *ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+    if (!ev) return 0;
 
-    BPF_SNPRINTF(str_out, 80, "eptracer{pid=\"%d\", syscall=\"setuid\", uid=\"%d\"} ", pid, (int)ctx->args[0]);
-    bpf_ringbuf_submit(str_out, 0);
+    ev->type = EVENT_SETUID;
+    ev->pid = pid;
+    ev->args[0] = ctx->args[0];
+    bpf_ringbuf_submit(ev, 0);
     
     return 0;
 }
@@ -483,15 +490,16 @@ int setuid_decode(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_enter_setgid")
 int setgid_decode(struct trace_event_raw_sys_enter *ctx) 
 {
-    
     int pid = is_target_program();
     if (!pid) return 0;
 
-    char *str_out = bpf_ringbuf_reserve(&syscall_rb_map, 80, 0);
-    if (!str_out) return 0;
+    struct syscall_event_t *ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+    if (!ev) return 0;
 
-    BPF_SNPRINTF(str_out, 80, "eptracer{pid=\"%d\", syscall=\"setgid\", gid=\"%d\"} ", pid, (int)ctx->args[0]);
-    bpf_ringbuf_submit(str_out, 0);
+    ev->type = EVENT_SETGID;
+    ev->pid = pid;
+    ev->args[0] = ctx->args[0];
+    bpf_ringbuf_submit(ev, 0);
     
     return 0;
 }
@@ -499,16 +507,17 @@ int setgid_decode(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_enter_capset")
 int capset_decode(struct trace_event_raw_sys_enter *ctx) 
 {
-    
     int pid = is_target_program();
     if (!pid) return 0;
 
-    char *str_out = bpf_ringbuf_reserve(&syscall_rb_map, 120, 0);
-    if (!str_out) return 0;
+    struct syscall_event_t *ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+    if (!ev) return 0;
 
-    BPF_SNPRINTF(str_out, 120, "eptracer{pid=\"%d\", syscall=\"capset\", hdr=\"%p\", data=\"%p\"} ", pid,
-                (void*)ctx->args[0], (void*)ctx->args[1]);
-    bpf_ringbuf_submit(str_out, 0);
+    ev->type = EVENT_CAPSET;
+    ev->pid = pid;
+    ev->args[0] = ctx->args[0];
+    ev->args[1] = ctx->args[1];
+    bpf_ringbuf_submit(ev, 0);
     
     return 0;
 }
@@ -516,20 +525,20 @@ int capset_decode(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_enter_prctl")
 int prctl_decode(struct trace_event_raw_sys_enter *ctx) 
 {
-   
     int pid = is_target_program();
     if (!pid) return 0;
 
-    int option = (int)ctx->args[0];
-    unsigned long arg2 = (unsigned long)ctx->args[1];
+    struct syscall_event_t *ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+    if (!ev) return 0;
 
-    char *str_out = bpf_ringbuf_reserve(&syscall_rb_map, 150, 0);
-    if (!str_out) return 0;
-
-    BPF_SNPRINTF(str_out, 150, "eptracer{pid=\"%d\", syscall=\"prctl\", option=\"%d\", arg2=\"%lu\", arg3=\"%lu\", arg4=\"%lu\", arg5=\"%lu\"} ", pid,  
-                option, arg2, (unsigned long)ctx->args[2], 
-                (unsigned long)ctx->args[3], (unsigned long)ctx->args[4]);
-    bpf_ringbuf_submit(str_out, 0);
+    ev->type = EVENT_PRCTL;
+    ev->pid = pid;
+    ev->args[0] = ctx->args[0];
+    ev->args[1] = ctx->args[1];
+    ev->args[2] = ctx->args[2];
+    ev->args[3] = ctx->args[3];
+    ev->args[4] = ctx->args[4];
+    bpf_ringbuf_submit(ev, 0);
  
     return 0;
 }
@@ -537,20 +546,20 @@ int prctl_decode(struct trace_event_raw_sys_enter *ctx)
 SEC("tracepoint/syscalls/sys_enter_keyctl")
 int keyctl_decode(struct trace_event_raw_sys_enter *ctx)
 {
-    
     int pid = is_target_program();
     if (!pid) return 0;
 
-    int cmd = (int)ctx->args[0];
-    unsigned long arg2 = (unsigned long)ctx->args[1];
+    struct syscall_event_t *ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+    if (!ev) return 0;
 
-    char *str_out = bpf_ringbuf_reserve(&syscall_rb_map, 120, 0);
-    if (!str_out) return 0;
-
-    BPF_SNPRINTF(str_out, 120, "eptracer{pid=\"%d\", syscall=\"keyctl\", cmd=\"%d\", arg2=\"%lu\", arg3=\"%lu\", arg4=\"%lu\", arg5=\"%lu\"} ", pid,  
-                cmd, arg2, (unsigned long)ctx->args[2], 
-                (unsigned long)ctx->args[3], (unsigned long)ctx->args[4]);
-    bpf_ringbuf_submit(str_out, 0);
+    ev->type = EVENT_KEYCTL;
+    ev->pid = pid;
+    ev->args[0] = ctx->args[0];
+    ev->args[1] = ctx->args[1];
+    ev->args[2] = ctx->args[2];
+    ev->args[3] = ctx->args[3];
+    ev->args[4] = ctx->args[4];
+    bpf_ringbuf_submit(ev, 0);
     
     return 0;
 }
