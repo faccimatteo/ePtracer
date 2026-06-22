@@ -30,7 +30,7 @@ struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
     __uint(max_entries, MAX_PROGRAM_TO_TRACE);
     __type(key, __u32);
-    __type(value, sizeof(MAX_PROGRAM_STRING_LEN)); 
+    __type(value, char[MAX_PROGRAM_STRING_LEN]); 
 } program_map SEC(".maps");
 
 struct {
@@ -70,8 +70,8 @@ static __always_inline __u32 str_equals(const char *s1, const char *s2, __u32 si
 /* Checks if event's process name is the one we want to trace */
 static __always_inline __u32 is_target_program()
 {
-    const char *program_to_trace= NULL;
-    __u32 key = 0, processed_char = 0, pid = 0;
+    const char *program_to_trace = NULL;
+    __u32 key = 0, pid = 0;
     __u64 pid_tgid = 0, pid_to_trace = 0;
     char program_name[MAX_PROGRAM_STRING_LEN];
 
@@ -88,21 +88,30 @@ static __always_inline __u32 is_target_program()
         return 0;
     }
 
-    /* skip process if not identified by process name nor PID */
-    if (str_equals(program_name, program_to_trace, sizeof(program_to_trace)) != 0)
+    pid_tgid = bpf_get_current_pid_tgid();
+    pid = pid_tgid >> 32;
+
+    /* Skip process if not identified by process name nor PID */
+    if (str_equals(program_name, program_to_trace, MAX_PROGRAM_STRING_LEN) != 0)
     {
-        processed_char = bpf_strtoul(program_to_trace, sizeof(program_to_trace), 10, &pid_to_trace);
-        if (processed_char == EINVAL)
-            bpf_printk("bpf_strtoul: no valid digits were found or unsupported base was provided"); 
-        if (processed_char == ERANGE)
-            bpf_printk("bpf_strtoul: resulting value was out of range");  
-        pid_tgid = bpf_get_current_pid_tgid();
-        pid = pid_tgid >> 32; 
-        if (pid_to_trace != pid)
+        pid_to_trace = 0;
+        /* Alternative for bpf_strtoul since it is not available in every Kernel version */
+        for (int i = 0; i < MAX_PROGRAM_STRING_LEN; i++) {
+            char c = program_to_trace[i];
+            if (c >= '0' && c <= '9') {
+                pid_to_trace = pid_to_trace * 10 + (c - '0');
+            } else {
+                break;
+            }
+        }
+        
+        if (pid_to_trace == 0 || pid_to_trace != pid)
             return 0;
         else
             return pid;
     }
+
+    return pid;
 }
 
 /* Stack traces analysis using perf events */

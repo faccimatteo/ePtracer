@@ -2,6 +2,6 @@
 build/*
 .output
 .vscode
+eptracer
 android-sysroot/
 android-bundle/
-eptracer
