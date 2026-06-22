@@ -6,9 +6,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "../include/ingestion.h"
-#include "../collector/victoriametrics/ingestion.c"
-
 
 static struct ring_buffer *ring_buf = NULL;
 
