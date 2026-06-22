@@ -227,8 +227,7 @@ void *stack_tracer(void *stack_tracer_arguments)
 		}
 	}
 
-	
-	// PERF EVENT INITIALIZATION PART
+	/* PERF EVENT INITIALIZATION PART */
 
 	log_debug("[+] Creating blaze symbolizer...\n");
 	symbolizer = blaze_symbolizer_new();
@@ -246,8 +245,7 @@ void *stack_tracer(void *stack_tracer_arguments)
 		// cleanup();
 		return NULL;
 	}
-	log_debug("[+] Ring buffer successfully created\n");
-
+	log_debug("[+] Perf buffer successfully created\n");
 	log_debug("[+] Polling events from perf buffer...\n");
 	while ((ret = perf_buffer__poll(perf_buf, 100)) >= 0) {}
 	return NULL;

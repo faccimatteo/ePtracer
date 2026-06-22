@@ -178,27 +178,13 @@ void decode_syscall(const __u64 syscall_number, const void *args[6])
  * */
 static int syscall_event_handler(void *ctx, void *data, size_t size)
 {
-	//const struct raw_syscall_t *e = data;
-	struct tm *tm;
-	char ts[32];
-	time_t t;
 	struct timespec t_spec;
     clock_gettime(CLOCK_REALTIME, &t_spec);
     
     long microseconds = t_spec.tv_sec * 1000000 + t_spec.tv_nsec / 1000;
 	char metric [256];
-	
-	time(&t);
-	printf("Time_ms ->  %ld\n", microseconds);
-	tm = localtime(&t);
-	strftime(ts, sizeof(ts), "%H:%M:%S", tm);
-
-	
-	printf("Time ->  %-8s\n", ts);
 	snprintf(metric, strlen((char*) data) + 17, "%s%ld", (char*) data, microseconds);
-	printf("metric: %s\n", metric);
-	printf("--------------------------------------------------------------\n");
-	ingest(metric);
+	printf("%s\n", metric);
 	return 0;
 }
 

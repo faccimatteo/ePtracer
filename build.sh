@@ -1,4 +1,7 @@
 #!/usr/bin/bash
+# Set up Rust toolkit chain
+curl https://sh.rustup.rs -sSf | sh && \
+. "$HOME/.cargo/env"
 # flags needed by blazesym if linked statically
 # BLAZESYM_FLAGS="-lrt -ldl -lpthread -lm"
 ROOT_DIR=$(pwd)

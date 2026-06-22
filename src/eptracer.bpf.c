@@ -67,7 +67,7 @@ static __always_inline __u32 str_equals(const char *s1, const char *s2, __u32 si
     return 0;
 }
 
-/* Checks if event's program name is the one we want to trace */
+/* Checks if event's process name is the one we want to trace */
 static __always_inline __u32 is_target_program()
 {
     const char *program_to_trace= NULL;
@@ -84,7 +84,7 @@ static __always_inline __u32 is_target_program()
     program_to_trace = bpf_map_lookup_elem(&program_map, &key);
     if (!program_to_trace)
     {
-        bpf_printk("[!] Error while getting program to trace");
+        bpf_printk("[!] Error while getting process to trace");
         return 0;
     }
 
@@ -180,52 +180,6 @@ int read_decode(struct trace_event_raw_sys_enter *ctx)
     return 0;
 }
 
-/*SEC("tracepoint/syscalls/sys_enter_execve")
-int execve_decode(struct syscall_execve_enter *ctx) 
-{
-    const char *filename;
-    const char **argv;
-    const char **envp;
-    char fname[MAX_LEN] = {0};
-    char arg[MAX_LEN] = {0};
-    int i = 0;
-    __u32 pid;
-
-    pid = is_target_program();
-    if (!pid)
-        return 0;
-    
-    // Extract syscall arguments
-    filename = (char *)ctx->argv[0];
-    argv = (char **)ctx->argv[1];
-    envp = (char **)ctx->argv[2];
-
-    // Read filename
-    bpf_probe_read_user_str(fname, sizeof(fname), ctx->filename);
-    bpf_printk("execve: %s", fname);
-
-    // Read execve arguments (argv)
-    for (i = 0; i < ARGV_MAX_SIZE; i++) {
-        const char *arg_ptr;
-        bpf_probe_read_user(&arg_ptr, sizeof(arg_ptr), &ctx->argv[i]);
-        // Checking if we have more arguments to scan
-        if (!arg_ptr) break;
-        bpf_probe_read_user_str(arg, sizeof(arg), arg_ptr);
-        bpf_printk(" arg[%d]: %s", i, arg);
-    }
-
-    // Read env variables used by newly created program (envp)
-    for (i = 0; i < ENVP_MAX_SIZE; i++) {
-        const char *env_ptr;
-        bpf_probe_read_user(&env_ptr, sizeof(env_ptr), &ctx->envp[i]);
-        // Checking if we have more env variables to scan
-        if (!env_ptr) break;
-        bpf_probe_read_user_str(arg, sizeof(arg), env_ptr);
-        bpf_printk(" env[%d]: %s", i, arg);
-    }
-
-    return 0;
-}*/
 SEC("tracepoint/syscalls/sys_enter_execve")
 int execve_decode(struct trace_event_raw_sys_enter *ctx) 
 {
@@ -302,25 +256,6 @@ int mprotect_decode(struct trace_event_raw_sys_enter *ctx)
     return 0;
 }
 
-/*SEC("tracepoint/syscalls/sys_enter_ioctl")
-int ioctl_decode(struct trace_event_raw_sys_enter *ctx)
-{
-    __u32 fd, cmd, pid;
-    __u64 arg;
-
-    pid = is_target_program();
-    if (!pid)
-        return 0;
-    
-    // Extract syscall arguments
-    fd = ctx->args[0];
-    cmd = ctx->args[1];
-    arg = ctx->args[2];
-
-    bpf_printk("ioctl(fd=\"%lu\", cmd=\"%lu\", arg=\"%lu\")", fd, cmd, arg);
-    return 0;
-}*/
-
 SEC("tracepoint/syscalls/sys_enter_openat")
 int openat_decode(struct trace_event_raw_sys_enter *ctx)
 {
@@ -381,32 +316,6 @@ int open_decode(struct trace_event_raw_sys_enter *ctx)
     return 0;
 }
 
-/*SEC("tracepoint/syscalls/sys_enter_mmap")
-int mmap_decode(struct trace_event_raw_sys_enter *ctx)
-{
-    __u32 pid;
-    __u64 addr, len, prot, flags, fd, off;
-
-    pid = is_target_program();
-    if (!pid) return 0;
-
-    // Extract syscall arguments
-    addr = ctx->args[0];
-    len = ctx->args[1];
-    prot = ctx->args[2];
-    flags = ctx->args[3];
-    fd = ctx->args[4];
-    off = ctx->args[5];
-
-    bpf_printk("mmap(addr=0x%08lx, len=0x%08lx, prot=\"%lu\", flags=\"%lu\", fd=\"%lu\", off=0x%08lx)", 
-            addr,
-            len,
-            prot,
-            flags,
-            fd,
-            off);
-    return 0;
-}*/
 SEC("tracepoint/syscalls/sys_enter_mmap")
 int mmap_decode(struct trace_event_raw_sys_enter *ctx) {
     int pid = is_target_program();
@@ -440,31 +349,6 @@ int write_decode(struct trace_event_raw_sys_enter *ctx)
     
     return 0;
 }
-
-/*SEC("tracepoint/syscalls/sys_enter_chmod")
-int chmod_decode(struct trace_event_raw_sys_enter *ctx) 
-{
-    
-    int pid = is_target_program();
-    if (!pid) return 0;
-
-    char filename[MAX_BUF_SIZE + 1] = {0};
-    long ret = bpf_probe_read_user(filename, MAX_BUF_SIZE, (void*)ctx->args[0]);
-    if (ret < 0) {
-        bpf_printk("chmod error reading filename");
-        return 0;
-    }
-    filename[MAX_BUF_SIZE] = 0;
-
-    char *str_out = bpf_ringbuf_reserve(&syscall_rb_map, 100, 0);
-    if (!str_out) return 0;
-
-    BPF_SNPRINTF(str_out, 100, "chmod(filename=\"%s\", mode=%o)",
-                filename, (unsigned int)ctx->args[1]);
-    bpf_ringbuf_submit(str_out, 0);
-    
-    return 0;
-}*/
 
 SEC("tracepoint/syscalls/sys_enter_chown")
 int chown_decode(struct trace_event_raw_sys_enter *ctx) 

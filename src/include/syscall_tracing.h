@@ -5,7 +5,7 @@
 #define MAX_LEN 128 
 
 /* Maximum redable system calll buffer size */
-#define MAX_BUF_SIZE 32
+#define MAX_BUF_SIZE 128
 
 struct raw_syscall_t {
 	char *program_name;

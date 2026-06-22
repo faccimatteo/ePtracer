@@ -1,12 +1,11 @@
-#include <argp.h>
 #include <assert.h>
 #include <errno.h>
 #include <bpf/bpf.h>
-#include <bpf/libbpf.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -310,7 +309,7 @@ int main(int argc, char **argv)
 	}
 	
 	/* Parsing command line arguments */
-	err = argp_parse(&argp, argc, argv, 0, 0, &args);
+	err = parse_args(argc, argv, &args);
 	if (err) {
 		log_error("[!] Error parsing program arguments");
 		return 1;
