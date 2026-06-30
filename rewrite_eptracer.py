@@ -1,167 +1,31 @@
-/* vmlinux.h must be the first one to be included if using BTF */
-#include "vmlinux.h"
-#include <bpf/bpf_helpers.h>
-#include <bpf/bpf_tracing.h>
-#include <errno.h>
-#include <string.h>
+import re
 
-#include "include/stack_tracing.h"
-#include "include/syscall_tracing.h"
+with open("src/eptracer.bpf.c", "r") as f:
+    content = f.read()
 
-// Detect Android
-#if defined(__ANDROID__) || defined(ANDROID_SMP) || defined(CONFIG_ANDROID) || defined(__aarch64__) || defined(__arm__)
-    #define IS_ANDROID 1
-#else
-    #define IS_ANDROID 0
-#endif
+# We need to find all SEC("tracepoint/syscalls/sys_enter_*") blocks.
+# The structure is:
+# SEC("tracepoint/syscalls/sys_enter_XXX")
+# int XXX_decode(struct trace_event_raw_sys_enter *ctx) 
+# { ... }
 
-// Hardcoded ioctl commands for binder on Android to avoid missing header issues (e.g., in eadb Debian chroot)
-#ifndef BINDER_WRITE_READ
-    #define BINDER_WRITE_READ       0xc0306201
-#endif
-#ifndef BINDER_SET_CONTEXT_MGR
-    #define BINDER_SET_CONTEXT_MGR  0x40046207
-#endif
+# We'll replace them all with a single multiplexer.
+# First, let's extract the body of each to see what they do.
+# Actually, they are very simple. They mostly reserve a ringbuf, set type, copy args, and submit.
+# I will just write a new file completely.
 
-struct {
-    __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
-    __uint(max_entries, 2);
-    __uint(key_size, sizeof(int));
-    __uint(value_size, sizeof(__u32));
-} perfmap SEC(".maps");
+new_code = """
+// ... (I will append the original headers and maps) ...
+"""
 
-struct {
-    __uint(type, BPF_MAP_TYPE_ARRAY);
-    __uint(max_entries, MAX_PROGRAM_TO_TRACE);
-    __type(key, __u32);
-    __type(value, char[MAX_PROGRAM_STRING_LEN]); 
-} program_map SEC(".maps");
+# I will parse the original file up to the first SEC("tracepoint/syscalls/")
+idx = content.find('SEC("tracepoint/syscalls/sys_enter_ptrace")')
+header_part = content[:idx]
 
-struct {
-    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-    __uint(max_entries, 1);
-    __type(key, __u32);
-    __type(value, struct stack_trace_t);
-} stackdata_map SEC(".maps");
+# Remove the old SEC("perf_event") get_stacktrace? No, keep it!
+# Wait, get_stacktrace is SEC("perf_event") and is before sys_enter_ptrace.
 
-struct {
-    __uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
-    __uint(max_entries, 1);
-    __type(key, __u32);
-    __type(value, struct raw_syscall_t);
-} syscall_map SEC(".maps");
-
-struct {
-    __uint(type, BPF_MAP_TYPE_RINGBUF);
-    __uint(max_entries, 4096);
-} syscall_rb_map SEC(".maps");
-
-
-/* Workaround as bpf_strncmp not working*/
-static __always_inline __u32 str_equals(const char *s1, const char *s2, __u32 size)
-{
-    int len = 0;
-    unsigned char c1, c2;
-    for (len = 0; len < size; ++len) {
-        c1 = *s1++;
-        c2 = *s2++;
-        if (c1 != c2) return c1 < c2 ? -1 : 1;
-        if (!c1) break;
-    }
-    return 0;
-}
-
-/* Checks if event's process name is the one we want to trace */
-static __always_inline __u32 is_target_program()
-{
-    const char *program_to_trace = NULL;
-    __u32 key = 0, pid = 0;
-    __u64 pid_tgid = 0, pid_to_trace = 0;
-    char program_name[MAX_PROGRAM_STRING_LEN];
-
-    if (bpf_get_current_comm(&program_name, MAX_PROGRAM_STRING_LEN) < 0)
-    {
-        bpf_printk("[!] Error while getting process name");
-        return 0;
-    }
-
-    program_to_trace = bpf_map_lookup_elem(&program_map, &key);
-    if (!program_to_trace)
-    {
-        bpf_printk("[!] Error while getting process to trace");
-        return 0;
-    }
-
-    pid_tgid = bpf_get_current_pid_tgid();
-    pid = pid_tgid >> 32;
-
-    /* Skip process if not identified by process name nor PID */
-    if (str_equals(program_name, program_to_trace, MAX_PROGRAM_STRING_LEN) != 0)
-    {
-        pid_to_trace = 0;
-        /* Alternative for bpf_strtoul since it is not available in every Kernel version */
-        for (int i = 0; i < MAX_PROGRAM_STRING_LEN; i++) {
-            char c = program_to_trace[i];
-            if (c >= '0' && c <= '9') {
-                pid_to_trace = pid_to_trace * 10 + (c - '0');
-            } else {
-                break;
-            }
-        }
-        
-        if (pid_to_trace == 0 || pid_to_trace != pid)
-            return 0;
-        else
-            return pid;
-    }
-
-    return pid;
-}
-
-/* Stack traces analysis using perf events */
-SEC("perf_event")
-int get_stacktrace(void *ctx)
-{
-    int max_len = 0, max_buildid_len = 0, total_size = 0;
-    struct stack_trace_t *data = NULL;
-    char program_name[MAX_PROGRAM_STRING_LEN];
-    __u32 key = 0, pid = 0, tgid = 0, prog_cmp_res = 0, processed_char = 0;
-    __u64 pid_tgid = 0, pid_to_trace = 0;
-
-    data = bpf_map_lookup_elem(&stackdata_map, &key);
-    if (!data)
-        return 0;
-     
-    pid = is_target_program();
-    if (!pid)
-        return 0;
-    
-    max_len = MAX_STACK_RAWTP * sizeof(__u64);
-    max_buildid_len = MAX_STACK_RAWTP * sizeof(struct bpf_stack_build_id);
-    data->pid = pid;
-    data->kern_stack_size = bpf_get_stack(
-				ctx, 
-				data->kern_stack,
-                max_len, 
-				0);
-    if (data->kern_stack_size < 0)
-        bpf_printk("bpf_get_stack: failed to get kernel stack");
-
-    data->user_stack_size = bpf_get_stack(
-				ctx, 
-				data->user_stack,
-				max_len,
-                BPF_F_USER_STACK);
-    if (data->user_stack_size < 0)
-        bpf_printk("bpf_get_stack: failed to get user stack");
-    
-    bpf_perf_event_output(ctx, &perfmap, 0, data, sizeof(*data));
- 
-    return 0;
-}
-
-/* Terminate ptrace-based debugger when a tentative to hook the target process is made */
-
+multiplexer = """
 #include <asm/unistd.h>
 
 SEC("tracepoint/raw_syscalls/sys_enter")
@@ -288,7 +152,7 @@ int sys_enter_multiplexer(struct trace_event_raw_sys_enter *ctx)
             ret = bpf_probe_read_user(filename, MAX_BUF_SIZE, (void*)ctx->args[0]);
             if (ret < 0) return 0;
             filename[MAX_BUF_SIZE] = 0;
-            bpf_printk("open(filename=\"%s\", flags=\"%lu\", mode=\"%lu\")", "", flags, mode);
+            bpf_printk("open(filename=\\"%s\\", flags=\\"%lu\\", mode=\\"%lu\\")", "", flags, mode);
             break;
         }
 #endif
@@ -468,3 +332,9 @@ int sys_enter_multiplexer(struct trace_event_raw_sys_enter *ctx)
 }
 
 char _license[] SEC("license") = "GPL";
+"""
+
+with open("src/eptracer.bpf.c", "w") as f:
+    f.write(header_part)
+    f.write(multiplexer)
+

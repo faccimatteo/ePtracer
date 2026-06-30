@@ -358,6 +358,7 @@ int main(int argc, char **argv)
 	log_debug("[+] Successfully tracing process %s", process_id);
 
 	log_debug("[+] Attaching to BPF program...");
+	
 	errno = eptracer_bpf__attach(skel);
 	if (errno) { 
 		log_error( "[!] Error finding BPF program");
