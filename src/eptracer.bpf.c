@@ -9,14 +9,18 @@
 #include "include/syscall_tracing.h"
 
 // Detect Android
-#if defined(__ANDROID__) || defined(ANDROID_SMP) || defined(CONFIG_ANDROID)
+#if defined(__ANDROID__) || defined(ANDROID_SMP) || defined(CONFIG_ANDROID) || defined(__aarch64__) || defined(__arm__)
     #define IS_ANDROID 1
-    #include <linux/android/binder.h>  // Android-specific headers
 #else
     #define IS_ANDROID 0
-    // Fallback definitions for non-Android
-    #define BINDER_WRITE_READ  _IOWR('b', 1, struct binder_write_read)
-    #define BINDER_SET_CONTEXT_MGR  _IOW('b', 7, int)
+#endif
+
+// Hardcoded ioctl commands for binder on Android to avoid missing header issues (e.g., in eadb Debian chroot)
+#ifndef BINDER_WRITE_READ
+    #define BINDER_WRITE_READ       0xc0306201
+#endif
+#ifndef BINDER_SET_CONTEXT_MGR
+    #define BINDER_SET_CONTEXT_MGR  0x40046207
 #endif
 
 struct {
@@ -450,7 +454,7 @@ int binder_ioctl_decode(struct trace_event_raw_sys_enter *ctx)
     int fd = (int)ctx->args[0];
     unsigned long cmd = (unsigned long)ctx->args[1];
 
-    #if defined(__ANDROID__) || defined(ANDROID_SMP) || defined(CONFIG_ANDROID)
+    #if IS_ANDROID
         // Check if the ioctl is targeting /dev/binder (fd might be cached)
         if (cmd != BINDER_WRITE_READ && cmd != BINDER_SET_CONTEXT_MGR) 
             return 0;
