@@ -16,10 +16,7 @@ BPFTOOL_SRC 		:= $(abspath ./bpftool/src)
 LIBBPF_OBJ 			:= $(abspath $(OUTPUT)/libbpf.a)
 BPFTOOL_OUTPUT 		?= $(abspath $(OUTPUT)/bpftool)
 BPFTOOL 			?= $(BPFTOOL_OUTPUT)/bootstrap/bpftool
-LDLIBS				?= 	-L/usr/lib/x86_64-linux-gnu/			\
-						-L/usr/lib/x86_64-linux-gnu/mit-krb5/	\
-						-L/lib/x86_64-linux-gnu/				\
-						-lcurl			\
+LDLIBS				?= 	-lcurl			\
 						-lnghttp2		\
 						-lidn2			\
 						-lrtmp			\
@@ -36,9 +33,9 @@ LDLIBS				?= 	-L/usr/lib/x86_64-linux-gnu/			\
 						-lbrotlidec		\
 						-lldap			\
 						-llber			\
-						/usr/lib/x86_64-linux-gnu/mit-krb5/libgssapi_krb5.so	\
-						/usr/lib/x86_64-linux-gnu/libkrb5.so					\
-						/usr/lib/x86_64-linux-gnu/libk5crypto.so				\
+						-lgssapi_krb5	\
+						-lkrb5			\
+						-lk5crypto		\
 						-lzstd			\
 						-lutil			\
 						-lrt			\
