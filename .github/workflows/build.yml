@@ -18,7 +18,11 @@ jobs:
           submodules: recursive
 
       - name: Install build dependencies
-        run: sudo ./install_deps.sh
+        run: |
+          sudo ./install_deps.sh
+          # provides gnu/stubs-32.h, pulled in by glibc headers when
+          # compiling with clang -target bpf on x86
+          sudo apt-get install -y gcc-multilib
 
       - name: Build
         run: ./build.sh
