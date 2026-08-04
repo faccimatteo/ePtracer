@@ -26,7 +26,7 @@ if ! command -v cargo >/dev/null; then
 fi
 
 # Vendored dependencies (bpftool/libbpf, blazesym, argparse, log.c)
-git submodule update --init
+git submodule update --init --recursive
 
 # Builds libbpf, bpftool, blazesym, the BPF program + skeleton and the
 # userspace binary
