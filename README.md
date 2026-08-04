@@ -41,7 +41,7 @@ curl https://sh.rustup.rs -sSf | sh   # Rust, if not installed
 ## Build
 
 ```sh
-git clone <repo-url> && cd eptracer
+git clone https://github.com/faccimatteo/ePtracer.git && cd eptracer
 ./build.sh
 ```
 
