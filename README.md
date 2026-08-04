@@ -34,6 +34,7 @@ Vendored dependencies (git submodules): **bpftool** (skeleton generation, also p
 On Debian/Ubuntu, install the build dependencies with:
 
 ```sh
+git clone https://github.com/faccimatteo/ePtracer.git && cd ePtracer
 ./install_deps.sh          # apt packages (clang, llvm, libelf, ...)
 curl https://sh.rustup.rs -sSf | sh   # Rust, if not installed
 ```
