@@ -1,0 +1,71 @@
+name: build
+
+on:
+  push:
+    branches: [main, fix-android]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # Native x64 build. This job is also the compile check: the arm64/android
+  # builds only start once the Makefile builds cleanly here.
+  build-linux-x64:
+    name: compile check + linux x64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Install build dependencies
+        run: |
+          sudo ./install_deps.sh
+          # provides gnu/stubs-32.h, pulled in by glibc headers when
+          # compiling with clang -target bpf on x86
+          sudo apt-get install -y gcc-multilib
+
+      - name: Build
+        run: ./build.sh
+
+      - name: Smoke test
+        run: ./eptracer --help
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: eptracer-linux-x64
+          path: eptracer
+
+  # arm64 build inside a Debian arm64 container (QEMU), which is the same
+  # userland eadb provides on Android. The resulting binary is published
+  # both as the Linux arm64 and the Android (eadb) executable.
+  build-linux-arm64-android:
+    name: linux arm64 + android (eadb)
+    needs: build-linux-x64
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - uses: docker/setup-qemu-action@v4
+        with:
+          platforms: arm64
+
+      - name: Build in Debian arm64 container
+        run: |
+          docker run --rm --platform linux/arm64 -v "$PWD:/src" -w /src debian:bookworm bash -c '
+            apt-get update && apt-get install -y git curl ca-certificates &&
+            git config --global --add safe.directory "*" &&
+            ./install_deps.sh &&
+            ./build.sh &&
+            ./eptracer --help'
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: eptracer-linux-arm64
+          path: eptracer
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: eptracer-android-arm64
+          path: eptracer

@@ -1,35 +1,35 @@
-#!/usr/bin/bash
-# flags needed by blazesym if linked statically
-# BLAZESYM_FLAGS="-lrt -ldl -lpthread -lm"
-ROOT_DIR=$(pwd)
+#!/usr/bin/env bash
+# One-shot build script for ePtracer.
+# Installs missing toolchains, fetches submodules and runs the Makefile build.
+set -euo pipefail
 
-# Creates build directory if not already present
-mkdir -p build
+cd "$(dirname "$0")"
 
-# initialize essential external repositories
-git submodule init
-git submodule update
+# Build dependencies (clang, llvm, libelf, make, ...) via apt
+if ! command -v clang >/dev/null || ! command -v make >/dev/null; then
+	echo "[*] Installing build dependencies (requires root)"
+	if [ "$(id -u)" -eq 0 ]; then
+		./install_deps.sh
+	else
+		sudo ./install_deps.sh
+	fi
+fi
 
-cd ${ROOT_DIR}
+# Rust toolchain, needed to build blazesym
+if [ -f "$HOME/.cargo/env" ]; then
+	. "$HOME/.cargo/env"
+fi
+if ! command -v cargo >/dev/null; then
+	echo "[*] Installing Rust toolchain"
+	curl https://sh.rustup.rs -sSf | sh -s -- -y
+	. "$HOME/.cargo/env"
+fi
 
-# Compile external dependencies
+# Vendored dependencies (bpftool/libbpf, blazesym, argparse, log.c)
+git submodule update --init --recursive
 
-# Blazesym
-cd blazesym/capi
-cargo build 
-cd $ROOT_DIR
-
-# Libbpf
-cd libbpf/src
-mkdir -p build root
-BUILD_STATIC_ONLY=y OBJDIR=build DESTDIR=root make install
-cd $ROOT_DIR
-
-# Argparse
-cd argparse
-make 
-cd $ROOT_DIR
-
-# Compile user land and BPF programs using CMake
-cd build && cmake ..
+# Builds libbpf, bpftool, blazesym, the BPF program + skeleton and the
+# userspace binary
 make
+
+echo "[+] Build complete: $(pwd)/eptracer"

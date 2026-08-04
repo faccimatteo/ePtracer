@@ -1,3 +1,7 @@
 # Ignore builded files
 build/*
 .output
+.vscode
+eptracer
+android-sysroot/
+android-bundle/

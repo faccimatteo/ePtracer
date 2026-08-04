@@ -5,7 +5,7 @@
 #define MAX_LEN 128 
 
 /* Maximum redable system calll buffer size */
-#define MAX_BUF_SIZE 32
+#define MAX_BUF_SIZE 128
 
 struct raw_syscall_t {
 	char *program_name;
@@ -52,4 +52,27 @@ struct syscall_enter {
     unsigned char r10;
     unsigned char r8;
     unsigned char r9;
+};
+
+/* structure to send argument to stack_tracer thread */
+struct syscall_tracer_args 
+{
+	struct eptracer_bpf *skel; 
+};
+
+void *syscall_tracer(void *syscall_tracer_arguments);
+
+enum syscall_event_type {
+    EVENT_PTRACE, EVENT_READ, EVENT_EXECVE, EVENT_FORK, EVENT_CLONE, EVENT_MPROTECT,
+    EVENT_OPENAT, EVENT_MMAP, EVENT_WRITE, EVENT_CHOWN, EVENT_MOUNT, EVENT_UMOUNT,
+    EVENT_IOCTL, EVENT_SETUID, EVENT_SETGID, EVENT_CAPSET, EVENT_PRCTL, EVENT_KEYCTL
+};
+
+struct syscall_event_t {
+    enum syscall_event_type type;
+    int pid;
+    __u64 args[6];
+    char str1[MAX_BUF_SIZE + 1];
+    char str2[MAX_BUF_SIZE + 1];
+    char str3[MAX_BUF_SIZE + 1];
 };

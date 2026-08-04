@@ -6,15 +6,6 @@
 static struct blaze_symbolizer *symbolizer = NULL;
 static struct perf_buffer *perf_buf = NULL;
 
-/* structure to send argument to stack_tracer thread */
-struct stack_tracer_args 
-{
-	bool *online_mask;
-	int num_cpus;
-	int num_online_cpus;
-    struct eptracer_bpf *skel; 
-};
-
 static long perf_event_open(struct perf_event_attr *hw_event, pid_t pid, int cpu, int group_fd,
 			    unsigned long flags)
 {
@@ -154,7 +145,7 @@ static void stack_event_handler(void *ctx, int cpu, void *stack_data, __u32 stac
 	
 	/* Showing kernel stack events if any */
 	if (e->kern_stack_size > 0) {
-	    printf("Kernel stack size -> %d\n", e->kern_stack_size);
+	    printf("Kernel stack size -> %ld\n", e->kern_stack_size);
 		printf("Kernel:\n");
 		show_stack_trace(e->kern_stack, e->kern_stack_size / sizeof(__u64), 0);
 	} else {
@@ -174,8 +165,6 @@ static void stack_event_handler(void *ctx, int cpu, void *stack_data, __u32 stac
 	printf("\n");
 
 }
-
-void *stack_tracer(void *stack_tracer_arguments);
 
 void *stack_tracer(void *stack_tracer_arguments)
 {
@@ -225,25 +214,27 @@ void *stack_tracer(void *stack_tracer_arguments)
 		perfd = perf_event_open(&attr, pid, cpu, -1, PERF_FLAG_FD_CLOEXEC);
 		if (perfd < 0) {
 			log_error("[!] Fail to set up performance monitor on a CPU/Core\n");
-			cleanup();
+			// cleanup();
+			return NULL;
 		}
 		perfds[cpu] = perfd;
 
 		/* Assign each CPU a BPF program to analyze stack traces */
 		links[cpu] = bpf_program__attach_perf_event(skel->progs.get_stacktrace, perfd);
 		if (!links[cpu]) {
-			cleanup();
+			// cleanup();
+			return NULL;
 		}
 	}
 
-	
-	// PERF EVENT INITIALIZATION PART
+	/* PERF EVENT INITIALIZATION PART */
 
 	log_debug("[+] Creating blaze symbolizer...\n");
 	symbolizer = blaze_symbolizer_new();
 	if (!symbolizer) {
 		log_error("Fail to create a symbolizer\n");
-		cleanup();
+		// cleanup();
+		return NULL;
 	}
 	log_debug("[+] Successfully created blaze symbolizer\n");
 
@@ -251,10 +242,10 @@ void *stack_tracer(void *stack_tracer_arguments)
 	perf_buf = perf_buffer__new(bpf_map__fd(skel->maps.perfmap), 8, stack_event_handler, NULL, NULL, NULL);
 	if (!perf_buf) {
 		log_error("[!] Error creating perf buffer manager\n");
-		cleanup();
+		// cleanup();
+		return NULL;
 	}
-	log_debug("[+] Ring buffer successfully created\n");
-
+	log_debug("[+] Perf buffer successfully created\n");
 	log_debug("[+] Polling events from perf buffer...\n");
 	while ((ret = perf_buffer__poll(perf_buf, 100)) >= 0) {}
 	return NULL;

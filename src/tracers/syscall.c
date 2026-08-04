@@ -3,14 +3,11 @@
 #include <time.h>
 #include <sys/resource.h>
 #include <pthread.h>
+#include <stdio.h>
+#include <stdlib.h>
+
 
 static struct ring_buffer *ring_buf = NULL;
-
-/* structure to send argument to stack_tracer thread */
-struct syscall_tracer_args 
-{
-	struct eptracer_bpf *skel; 
-};
 
 /**
  * decode_syscall
@@ -158,6 +155,7 @@ void decode_syscall(const __u64 syscall_number, const void *args[6])
 		default:
 			// printf("Failed to parse syscall number: %lx", syscall_number);
 			printf("syscall (%lx, %lx, %lx, %lx, %lx, %lx)\n", args[0], args[1], args[2], args[3], args[4], args[5]);
+			break;
 	}
 }
 
@@ -177,25 +175,90 @@ void decode_syscall(const __u64 syscall_number, const void *args[6])
  * */
 static int syscall_event_handler(void *ctx, void *data, size_t size)
 {
-	const struct raw_syscall_t *e = data;
-	struct tm *tm;
-	char ts[32];
-	time_t t;
-	
-	time(&t);
-	tm = localtime(&t);
-	strftime(ts, sizeof(ts), "%H:%M:%S", tm);
+	struct timespec t_spec;
+    clock_gettime(CLOCK_REALTIME, &t_spec);
+    
+    long microseconds = t_spec.tv_sec * 1000000 + t_spec.tv_nsec / 1000;
+	char metric [1024];
+    struct syscall_event_t *ev = (struct syscall_event_t *)data;
 
-	printf("Time ->  %-8s\n", ts);
-	printf("Syscall ID -> %ld\n", e->syscall_id);
-	printf("PID -> %lu\n", e->pid);
-	printf("TGID -> %lu\n", e->tgid);
-	decode_syscall(e->syscall_id, e->args);
-	printf("--------------------------------------------------------------\n");
+    switch(ev->type) {
+        case EVENT_PTRACE:
+            snprintf(metric, sizeof(metric), "eptracer{pid=\"%d\", syscall=\"ptrace\", request=\"%d\", pid=\"%d\", addr=\"%p\", data=\"%p\"} %ld", 
+                     ev->pid, (int)ev->args[0], (int)ev->args[1], (void*)ev->args[2], (void*)ev->args[3], microseconds);
+            break;
+        case EVENT_READ:
+            snprintf(metric, sizeof(metric), "eptracer{pid=\"%d\", syscall=\"read\", fd=\"%d\", buf=\"%p\", count=\"%lu\"} %ld", 
+                     ev->pid, (int)ev->args[0], (void*)ev->args[1], (unsigned long)ev->args[2], microseconds);
+            break;
+        case EVENT_EXECVE:
+            snprintf(metric, sizeof(metric), "eptracer{pid=\"%d\", syscall=\"execve\", filename=\"%s\", argv=\"%p\", envp=\"%p\"} %ld", 
+                     ev->pid, ev->str1, (void*)ev->args[1], (void*)ev->args[2], microseconds);
+            break;
+        case EVENT_FORK:
+            snprintf(metric, sizeof(metric), "eptracer{pid=\"%d\", syscall=\"fork\"} %ld", ev->pid, microseconds);
+            break;
+        case EVENT_CLONE:
+            snprintf(metric, sizeof(metric), "eptracer{pid=\"%d\", syscall=\"clone\", flags=\"%lx\", child_stack=\"%p\", parent_tid=\"%p\", child_tid=\"%p\"} %ld", 
+                     ev->pid, ev->args[0], (void*)ev->args[1], (void*)ev->args[2], (void*)ev->args[3], microseconds);
+            break;
+        case EVENT_MPROTECT:
+            snprintf(metric, sizeof(metric), "eptracer{pid=\"%d\", syscall=\"mprotect\", addr=\"%p\", len=\"%lu\", prot=\"%d\"} %ld", 
+                     ev->pid, (void*)ev->args[0], (unsigned long)ev->args[1], (int)ev->args[2], microseconds);
+            break;
+        case EVENT_OPENAT:
+            snprintf(metric, sizeof(metric), "eptracer{pid=\"%d\", syscall=\"openat\", fd=\"%d\", filename=\"%s\", flags=\"%d\", mode=\"%d\"} %ld", 
+                     ev->pid, (int)ev->args[0], ev->str1, (int)ev->args[2], (int)ev->args[3], microseconds);
+            break;
+        case EVENT_MMAP:
+            snprintf(metric, sizeof(metric), "eptracer{pid=\"%d\", syscall=\"mmap\", addr=\"%p\", length=\"%lu\", prot=\"%d\", flags=\"%d\", fd=\"%d\", off=\"%lu\"} %ld", 
+                     ev->pid, (void*)ev->args[0], (unsigned long)ev->args[1], (int)ev->args[2], (int)ev->args[3], (int)ev->args[4], (unsigned long)ev->args[5], microseconds);
+            break;
+        case EVENT_WRITE:
+            snprintf(metric, sizeof(metric), "eptracer{pid=\"%d\", syscall=\"write\", fd=\"%d\", buf=\"%p\", count=\"%lu\"} %ld", 
+                     ev->pid, (int)ev->args[0], (void*)ev->args[1], (unsigned long)ev->args[2], microseconds);
+            break;
+        case EVENT_CHOWN:
+            snprintf(metric, sizeof(metric), "eptracer{pid=\"%d\", syscall=\"chown\", filename=\"%s\", uid=\"%d\", gid=\"%d\"} %ld", 
+                     ev->pid, ev->str1, (int)ev->args[1], (int)ev->args[2], microseconds);
+            break;
+        case EVENT_MOUNT:
+            snprintf(metric, sizeof(metric), "eptracer{pid=\"%d\", syscall=\"mount\", source=\"%s\", target=\"%s\", fstype=\"%s\", flags=\"%lx\", data=\"%p\"} %ld", 
+                     ev->pid, ev->str1, ev->str2, ev->str3, (unsigned long)ev->args[3], (void*)ev->args[4], microseconds);
+            break;
+        case EVENT_UMOUNT:
+            snprintf(metric, sizeof(metric), "eptracer{pid=\"%d\", syscall=\"umount\", target=\"%s\", flags=\"%d\"} %ld", 
+                     ev->pid, ev->str1, (int)ev->args[1], microseconds);
+            break;
+        case EVENT_IOCTL:
+            snprintf(metric, sizeof(metric), "eptracer{pid=\"%d\", syscall=\"binder_ioctl\", fd=\"%d\", cmd=\"%lu\", arg=\"%lu\"} %ld", 
+                     ev->pid, (int)ev->args[0], (unsigned long)ev->args[1], (unsigned long)ev->args[2], microseconds);
+            break;
+        case EVENT_SETUID:
+            snprintf(metric, sizeof(metric), "eptracer{pid=\"%d\", syscall=\"setuid\", uid=\"%d\"} %ld", ev->pid, (int)ev->args[0], microseconds);
+            break;
+        case EVENT_SETGID:
+            snprintf(metric, sizeof(metric), "eptracer{pid=\"%d\", syscall=\"setgid\", gid=\"%d\"} %ld", ev->pid, (int)ev->args[0], microseconds);
+            break;
+        case EVENT_CAPSET:
+            snprintf(metric, sizeof(metric), "eptracer{pid=\"%d\", syscall=\"capset\", hdr=\"%p\", data=\"%p\"} %ld", 
+                     ev->pid, (void*)ev->args[0], (void*)ev->args[1], microseconds);
+            break;
+        case EVENT_PRCTL:
+            snprintf(metric, sizeof(metric), "eptracer{pid=\"%d\", syscall=\"prctl\", option=\"%d\", arg2=\"%lu\", arg3=\"%lu\", arg4=\"%lu\", arg5=\"%lu\"} %ld", 
+                     ev->pid, (int)ev->args[0], (unsigned long)ev->args[1], (unsigned long)ev->args[2], (unsigned long)ev->args[3], (unsigned long)ev->args[4], microseconds);
+            break;
+        case EVENT_KEYCTL:
+            snprintf(metric, sizeof(metric), "eptracer{pid=\"%d\", syscall=\"keyctl\", cmd=\"%d\", arg2=\"%lu\", arg3=\"%lu\", arg4=\"%lu\", arg5=\"%lu\"} %ld", 
+                     ev->pid, (int)ev->args[0], (unsigned long)ev->args[1], (unsigned long)ev->args[2], (unsigned long)ev->args[3], (unsigned long)ev->args[4], microseconds);
+            break;
+        default:
+            snprintf(metric, sizeof(metric), "eptracer{pid=\"%d\", syscall=\"unknown\"} %ld", ev->pid, microseconds);
+            break;
+    }
+	printf("%s\n", metric);
 	return 0;
 }
-
-void *syscall_tracer(void *syscall_tracer_arguments);
 
 void* syscall_tracer(void *syscall_tracer_arguments)
 {

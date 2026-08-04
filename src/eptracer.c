@@ -1,12 +1,11 @@
-#include <argp.h>
 #include <assert.h>
 #include <errno.h>
 #include <bpf/bpf.h>
-#include <bpf/libbpf.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -29,6 +28,13 @@ static struct arguments args;
 static int log_level = LOG_DEBUG;
 static FILE *f = NULL;
 static struct eptracer_bpf *skel = NULL;
+
+/*
+ * This function is from libbpf, but it is not a public API and can only be
+ * used for demonstration. We can use this here because we statically link
+ * against the libbpf built from submodule during build.
+ */
+extern int parse_cpu_mask_file(const char *fcpu, bool **mask, int *mask_sz);
 
 /**
  * cleanup
@@ -72,9 +78,9 @@ static int libbpf_print_fn(enum libbpf_print_level level, const char *format, va
 	}
 
 	if (args.log_file && strlen(args.log_file) != 0) {
-        return fprintf(f, format, fn_args);
+        return vfprintf(f, format, fn_args);
 	} else {
-		return fprintf(stdout, format, fn_args);
+		return vfprintf(stdout, format, fn_args);
 	}
 	return -1;
 }
@@ -157,40 +163,42 @@ char* get_PID_to_trace()
 
         process_to_spawn = fork();
         switch(process_to_spawn) {
-        case -1:
-            log_error("[!] Cannot spawn process to trace! (fork error)");
-            exit(1);
-        case 0:
-            /* Communicating PID to trace to ePtracer */
-            close(pipe_fd[0]);
-            pid_to_trace = getpid();
-            if (write(pipe_fd[1], &pid_to_trace, sizeof(pid_to_trace)) < 0) {
-                log_error("[!] Error while sending PID to trace: %s", strerror(errno));
-                exit(1);
-            }
-            log_debug("[+] PID to trace successfully sent to ePtracer");
-            close(pipe_fd[1]);
+			case -1:
+				log_error("[!] Cannot spawn process to trace! (fork error)");
+				exit(1);
+			case 0:
+				/* Communicating PID to trace to ePtracer */
+				close(pipe_fd[0]);
+				pid_to_trace = getpid();
+				if (write(pipe_fd[1], &pid_to_trace, sizeof(pid_to_trace)) < 0) {
+					log_error("[!] Error while sending PID to trace: %s", strerror(errno));
+					exit(1);
+				}
+				log_debug("[+] PID to trace successfully sent to ePtracer");
+				close(pipe_fd[1]);
 
-            if (execvp(execvp_file, execvp_argv) == -1) {
-                log_error("[!] Cannot spawn process to trace! (execvp error)");
-                exit(1);
-            }
-        default:
-            /* Reading tracer PID */
-            close(pipe_fd[1]);
-            if (read(pipe_fd[0], &pid_to_trace, sizeof(pid_to_trace)) < 0) {
-                log_error("[!] Error while receiving PID to trace: %s", strerror(errno));
-                exit(1);
-            } 
+				if (execvp(execvp_file, execvp_argv) == -1) {
+					log_error("[!] Cannot spawn process to trace! (execvp error)");
+					exit(1);
+				}
+				break;
+			default:
+				/* Reading tracer PID */
+				close(pipe_fd[1]);
+				if (read(pipe_fd[0], &pid_to_trace, sizeof(pid_to_trace)) < 0) {
+					log_error("[!] Error while receiving PID to trace: %s", strerror(errno));
+					exit(1);
+				} 
 
-            close(pipe_fd[0]);
-            log_debug("[+] PID to trace received: %d", pid_to_trace);
+				close(pipe_fd[0]);
+				log_debug("[+] PID to trace received: %d", pid_to_trace);
 
-            if (snprintf(pid_to_trace_str, MAX_PID_LEN, "%d", pid_to_trace) < 0) {
-                log_error("[!] Error while convering PID to trace");
-                exit(1);
-            }
-            return pid_to_trace_str;
+				if (snprintf(pid_to_trace_str, MAX_PID_LEN, "%d", pid_to_trace) < 0) {
+					log_error("[!] Error while convering PID to trace");
+					exit(1);
+				}
+				return pid_to_trace_str;
+				break;
         }
     }
     return NULL;
@@ -301,7 +309,7 @@ int main(int argc, char **argv)
 	}
 	
 	/* Parsing command line arguments */
-	err = argp_parse(&argp, argc, argv, 0, 0, &args);
+	err = parse_args(argc, argv, &args);
 	if (err) {
 		log_error("[!] Error parsing program arguments");
 		return 1;
@@ -334,8 +342,9 @@ int main(int argc, char **argv)
 	/* Get BPF skeleton to manage BPF objects in a easier way */
 	skel = load_BPF_program();
 	if (!skel) {
-			log_error("[!] Error opening and loading BPF file");
-			cleanup();
+		log_error("[!] Error opening and loading BPF file");
+		cleanup();
+		return 1;
 	}		
 	log_debug("[+] BFP program correctly loaded");
 	log_debug("[+] Setting user process to trace...");
@@ -344,14 +353,17 @@ int main(int argc, char **argv)
 	if (!process_id || initialize_array(bpf_map__fd(skel->maps.program_map), process_id) < 0) {
 		log_error("[!] Error setting process to trace. Please make sure to specify one process to trace using PID or consider spawning a new one.");
 		cleanup();
+		return 1;
 	}
 	log_debug("[+] Successfully tracing process %s", process_id);
 
 	log_debug("[+] Attaching to BPF program...");
+	
 	errno = eptracer_bpf__attach(skel);
 	if (errno) { 
 		log_error( "[!] Error finding BPF program");
 		cleanup();
+		return 1;
 	}
 
 	log_debug("[+] Successfully attached to BFP program");
@@ -388,6 +400,7 @@ int main(int argc, char **argv)
 		if (pthread_create(&stack_tracer_thread, NULL, stack_tracer, (void*) &stack_thread_arguments)) {
 			log_error("[!] Failed to create stack tracer thread.");
 			cleanup();
+			return 1;
 		}
 		threads[thread_index++] = stack_tracer_thread;
 	}
@@ -398,6 +411,7 @@ int main(int argc, char **argv)
 		if (pthread_create(&syscall_tracer_thread, NULL, syscall_tracer, (void*) &syscall_thread_arguments)) {
 			log_error("[!] Failed to create syscall tracer thread.");
 			cleanup();
+			return 1;
 		}
 		threads[thread_index++] = syscall_tracer_thread;
 	}

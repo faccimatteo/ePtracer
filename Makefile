@@ -16,6 +16,36 @@ BPFTOOL_SRC 		:= $(abspath ./bpftool/src)
 LIBBPF_OBJ 			:= $(abspath $(OUTPUT)/libbpf.a)
 BPFTOOL_OUTPUT 		?= $(abspath $(OUTPUT)/bpftool)
 BPFTOOL 			?= $(BPFTOOL_OUTPUT)/bootstrap/bpftool
+LDLIBS				?= 	-lcurl			\
+						-lnghttp2		\
+						-lidn2			\
+						-lrtmp			\
+						-lssh			\
+						-lpsl			\
+						-lssl			\
+						-lcrypto		\
+						-lzstd			\
+						-lz				\
+						-lgnutls		\
+						-lsasl2			\
+						-ltasn1			\
+						-lffi			\
+						-lbrotlidec		\
+						-lldap			\
+						-llber			\
+						-lgssapi_krb5	\
+						-lkrb5			\
+						-lk5crypto		\
+						-lzstd			\
+						-lutil			\
+						-lrt			\
+						-lpthread		\
+						-lm				\
+						-ldl			\
+						-lc				\
+						-lelf			\
+						-lz
+
 # CROSS_COMPILE		?= "" 
 ARCH 				?= $(shell uname -m | sed 's/x86_64/x86/' \
 	 				   	 | sed 's/arm.*/arm/' \
@@ -35,18 +65,15 @@ CFLAGS 				:= -O2 -Wall -Wformat -Wformat=2 -Wconversion -Wimplicit-fallthrough 
 						-Werror=format-security \
 						-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 \
 						-D_GLIBCXX_ASSERTIONS \
-						-fstrict-flex-arrays=3 \
 						-fstack-clash-protection -fstack-protector-strong \
 						-Wl,-z,nodlopen -Wl,-z,noexecstack \
 						-Wl,-z,relro -Wl,-z,now \
 						-Wl,--as-needed -Wl,--no-copy-dt-needed-entries
-ALL_LDFLAGS 		:= $(LDFLAGS) $(EXTRA_LDFLAGS) -static
+ALL_LDFLAGS 		:= $(LDFLAGS) $(EXTRA_LDFLAGS) $(LDLIBS)
 
 APPS 				= eptracer 
 
 CARGO 				?= $(shell which cargo)
-
-ALL_LDFLAGS 		+= -lzstd -lutil -lrt -lpthread -lm -ldl -lc
 
 ifeq ($(strip $(CARGO)),)
 BZS_APPS :=
@@ -148,7 +175,7 @@ $(LIBBLAZESYM_HEADER):
 	$(call msg,LIB,$@)
 	$(Q)cp $(LIBBLAZESYM_SRC)/target/release/blazesym.h $@
 
-# Generate BPF skeletons
+# Generate BPF skeleton
 $(OUTPUT)/%.skel.h: $(OUTPUT)/%.bpf.o | $(OUTPUT) $(BPFTOOL)
 	$(call msg,GEN-SKEL,$@)
 	$(Q)$(BPFTOOL) gen skeleton $< > $@
@@ -157,9 +184,11 @@ $(OUTPUT)/%.skel.h: $(OUTPUT)/%.bpf.o | $(OUTPUT) $(BPFTOOL)
 # Build BPF code
 $(OUTPUT)/%.bpf.o: $(SRC)/%.bpf.c $(LIBBPF_OBJ) $(wildcard $(OUTPUT)/%.skel.h) $(VMLINUX) | $(OUTPUT) $(BPFTOOL)
 	$(call msg,BPF,$@)
-	$(Q)$(CLANG) -Xlinker --export-dynamic -g -O2 -target bpf -D__TARGET_ARCH_$(ARCH)		      \
-		     $(INCLUDES) $(CLANG_BPF_SYS_INCLUDES)		      \
-		     -c $(filter %.c,$^) -o $(patsubst %.bpf.o,%.tmp.bpf.o,$@)
+	$(Q)$(CLANG) -Xlinker --export-dynamic \
+			-g -O2 \
+			-target bpf -D__TARGET_ARCH_$(ARCH) \
+		    $(INCLUDES) $(CLANG_BPF_SYS_INCLUDES) \
+		    -c $(filter %.c,$^) -o $(patsubst %.bpf.o,%.tmp.bpf.o,$@)
 	$(Q)$(BPFTOOL) gen object $@ $(patsubst %.bpf.o,%.tmp.bpf.o,$@)
 
 # Build userspace code
@@ -176,4 +205,4 @@ $(BZS_APPS): $(LIBBLAZESYM_OBJ)
 # Build application binary
 $(APPS): %: $(OUTPUT)/%.o $(LIBBPF_OBJ) $(LIBBLAZESYM_OBJ) $(LIBARGPARSE_OBJ) $(LIBLOG_OBJ) | $(OUTPUT)
 	$(call msg,BINARY,$@)
-	$(Q)$(CC) $^ $(ALL_LDFLAGS) -g3 -lelf -lz -o $@ 
+	$(Q)$(CC) $^ $(ALL_LDFLAGS) -g3 -o $@ 

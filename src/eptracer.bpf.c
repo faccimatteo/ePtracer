@@ -8,6 +8,21 @@
 #include "include/stack_tracing.h"
 #include "include/syscall_tracing.h"
 
+// Detect Android
+#if defined(__ANDROID__) || defined(ANDROID_SMP) || defined(CONFIG_ANDROID) || defined(__aarch64__) || defined(__arm__)
+    #define IS_ANDROID 1
+#else
+    #define IS_ANDROID 0
+#endif
+
+// Hardcoded ioctl commands for binder on Android to avoid missing header issues (e.g., in eadb Debian chroot)
+#ifndef BINDER_WRITE_READ
+    #define BINDER_WRITE_READ       0xc0306201
+#endif
+#ifndef BINDER_SET_CONTEXT_MGR
+    #define BINDER_SET_CONTEXT_MGR  0x40046207
+#endif
+
 struct {
     __uint(type, BPF_MAP_TYPE_PERF_EVENT_ARRAY);
     __uint(max_entries, 2);
@@ -19,7 +34,7 @@ struct {
     __uint(type, BPF_MAP_TYPE_ARRAY);
     __uint(max_entries, MAX_PROGRAM_TO_TRACE);
     __type(key, __u32);
-    __type(value, sizeof(MAX_PROGRAM_STRING_LEN)); 
+    __type(value, char[MAX_PROGRAM_STRING_LEN]); 
 } program_map SEC(".maps");
 
 struct {
@@ -38,7 +53,7 @@ struct {
 
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
-    __uint(max_entries, 256 * 1024 /* 256 KB */);
+    __uint(max_entries, 4096);
 } syscall_rb_map SEC(".maps");
 
 
@@ -56,11 +71,11 @@ static __always_inline __u32 str_equals(const char *s1, const char *s2, __u32 si
     return 0;
 }
 
-/* Checks if event's program name is the one we want to trace */
+/* Checks if event's process name is the one we want to trace */
 static __always_inline __u32 is_target_program()
 {
-    const char *program_to_trace= NULL;
-    __u32 key = 0, processed_char = 0, pid = 0;
+    const char *program_to_trace = NULL;
+    __u32 key = 0, pid = 0;
     __u64 pid_tgid = 0, pid_to_trace = 0;
     char program_name[MAX_PROGRAM_STRING_LEN];
 
@@ -73,25 +88,34 @@ static __always_inline __u32 is_target_program()
     program_to_trace = bpf_map_lookup_elem(&program_map, &key);
     if (!program_to_trace)
     {
-        bpf_printk("[!] Error while getting program to trace");
+        bpf_printk("[!] Error while getting process to trace");
         return 0;
     }
 
-    /* skip process if not identified by process name nor PID */
-    if (str_equals(program_name, program_to_trace, sizeof(program_to_trace)) != 0)
+    pid_tgid = bpf_get_current_pid_tgid();
+    pid = pid_tgid >> 32;
+
+    /* Skip process if not identified by process name nor PID */
+    if (str_equals(program_name, program_to_trace, MAX_PROGRAM_STRING_LEN) != 0)
     {
-        processed_char = bpf_strtoul(program_to_trace, sizeof(program_to_trace), 10, &pid_to_trace);
-        if (processed_char == EINVAL)
-            bpf_printk("bpf_strtoul: no valid digits were found or unsupported base was provided"); 
-        if (processed_char == ERANGE)
-            bpf_printk("bpf_strtoul: resulting value was out of range");  
-        pid_tgid = bpf_get_current_pid_tgid();
-        pid = pid_tgid >> 32; 
-        if (pid_to_trace != pid)
+        pid_to_trace = 0;
+        /* Alternative for bpf_strtoul since it is not available in every Kernel version */
+        for (int i = 0; i < MAX_PROGRAM_STRING_LEN; i++) {
+            char c = program_to_trace[i];
+            if (c >= '0' && c <= '9') {
+                pid_to_trace = pid_to_trace * 10 + (c - '0');
+            } else {
+                break;
+            }
+        }
+        
+        if (pid_to_trace == 0 || pid_to_trace != pid)
             return 0;
         else
             return pid;
     }
+
+    return pid;
 }
 
 /* Stack traces analysis using perf events */
@@ -137,325 +161,310 @@ int get_stacktrace(void *ctx)
 }
 
 /* Terminate ptrace-based debugger when a tentative to hook the target process is made */
-SEC("tracepoint/syscalls/sys_enter_ptrace")
-int terminate_ptrace_based_debugger(struct trace_event_raw_sys_enter *ctx)
-{
-     
-    bpf_printk("[+] ptrace has been called");
-    // send kill signal to tracer process
-    bpf_send_signal(9);
-    return 0;
-}
 
-SEC("tracepoint/syscalls/sys_enter_read")
-int read_decode(struct trace_event_raw_sys_enter *ctx) 
-{
-    unsigned int fd;
-    size_t count;
-    char buf[MAX_BUF_SIZE + 1] = {0};
-    __u32 pid = 0;
-    
-    pid = is_target_program();
-    if (!pid)
-        return 0;
+#include <asm/unistd.h>
 
-    // Extract syscall arguments
-    fd = ctx->args[0];
-    count = ctx->args[2];
-    
-    // Safety checks
-    if (count == 0) {
-        bpf_printk("read(fd=%d, count=0)", fd);
-        return 0;
-    }
-
-    // Limit read size
-    size_t to_read = count < MAX_BUF_SIZE ? count : MAX_BUF_SIZE;
-    
-    // Read user buffer safely
-    long ret = bpf_probe_read_user(buf, to_read, (void*)ctx->args[1]);
-    if (ret < 0) {
-        bpf_printk("read(fd=%d) error reading buffer: %ld", fd, ret);
-        return 0;
-    }
-    
-    // Ensure null termination (for string printing)
-    buf[to_read] = 0;
-    
-    // Print as hex if contains non-printable characters
-    int printable = 1;
-    for (int i = 0; i < to_read; i++) {
-        if (buf[i] < 32 || buf[i] > 126) {
-            printable = 0;
-            break;
-        }
-    }
-    
-    if (printable) {
-        bpf_printk("read(fd=%d, count=%lu): %s", fd, count, buf);
-    } else {
-        bpf_printk("read(fd=%d, count=%lu): %x", fd, count, buf);
-    }
-    
-    return 0;
-}
-
-SEC("tracepoint/syscalls/sys_enter_execve")
-int execve_decode(struct syscall_execve_enter *ctx) 
-{
-    const char *filename;
-    const char **argv;
-    const char **envp;
-    char fname[MAX_LEN] = {0};
-    char arg[MAX_LEN] = {0};
-    int i = 0;
-    __u32 pid;
-
-    pid = is_target_program();
-    if (!pid)
-        return 0;
-    
-    // Extract syscall arguments
-    filename = (char *)ctx->argv[0];
-    argv = (char **)ctx->argv[1];
-    envp = (char **)ctx->argv[2];
-
-    // Read filename
-    bpf_probe_read_user_str(fname, sizeof(fname), ctx->filename);
-    bpf_printk("execve: %s", fname);
-
-    // Read execve arguments (argv)
-    for (i = 0; i < ARGV_MAX_SIZE; i++) {
-        const char *arg_ptr;
-        bpf_probe_read_user(&arg_ptr, sizeof(arg_ptr), &ctx->argv[i]);
-        // Checking if we have more arguments to scan
-        if (!arg_ptr) break;
-        bpf_probe_read_user_str(arg, sizeof(arg), arg_ptr);
-        bpf_printk(" arg[%d]: %s", i, arg);
-    }
-
-    // Read env variables used by newly created program (envp)
-    for (i = 0; i < ENVP_MAX_SIZE; i++) {
-        const char *env_ptr;
-        bpf_probe_read_user(&env_ptr, sizeof(env_ptr), &ctx->envp[i]);
-        // Checking if we have more env variables to scan
-        if (!env_ptr) break;
-        bpf_probe_read_user_str(arg, sizeof(arg), env_ptr);
-        bpf_printk(" env[%d]: %s", i, arg);
-    }
-
-    return 0;
-}
-
-SEC("tracepoint/syscalls/sys_enter_ioctl")
-int ioctl_decode(struct trace_event_raw_sys_enter *ctx)
-{
-    __u32 fd, cmd, pid;
-    __u64 arg;
-
-    pid = is_target_program();
-    if (!pid)
-        return 0;
-    
-    // Extract syscall arguments
-    fd = ctx->args[0];
-    cmd = ctx->args[1];
-    arg = ctx->args[2];
-
-    bpf_printk("ioctl(fd=%lu, cmd=%lu, arg=%lu)", fd, cmd, arg);
-    return 0;
-}
-
-SEC("tracepoint/syscalls/sys_enter_openat")
-int openat_decode(struct trace_event_raw_sys_enter *ctx)
-{
-    int dfd, flags, mode, pid;
-    char filename[MAX_BUF_SIZE + 1] = {0};
-
-    pid = is_target_program();
-    if (!pid)
-        return 0;
-
-    long ret = bpf_probe_read_user(filename, MAX_BUF_SIZE, (void*)ctx->args[1]);
-    if (ret < 0) {
-        bpf_printk("openat error reading buffer: %ld", ret);
-        return 0;
-    }
-    
-    // Ensure null termination (for string printing)
-    filename[MAX_BUF_SIZE] = 0;
- 
-    // Extract syscall arguments
-    dfd = ctx->args[0];
-    flags = ctx->args[2];
-    mode = ctx->args[3];
-
-    bpf_printk("openat(dfd=%d, filename=%s, flags=%d, mode=%d)", dfd, filename, flags, mode);
-    return 0;
-}
-
-SEC("tracepoint/syscalls/sys_enter_open")
-int open_decode(struct trace_event_raw_sys_enter *ctx)
-{
-
-    __u32 flags, pid, mode;
-    char filename[MAX_BUF_SIZE + 1] = {0};
-    flags = ctx->args[1];
-    mode = ctx->args[2];
-
-    // Read user buffer safely
-    long ret = bpf_probe_read_user(filename, MAX_BUF_SIZE, (void*)ctx->args[0]);
-    if (ret < 0) {
-        bpf_printk("open error reading buffer: %ld", ret);
-        return 0;
-    }
-    
-    // Ensure null termination (for string printing)
-    filename[MAX_BUF_SIZE] = 0;
-    bpf_printk("open(filename=%s, flags=%lu, mode=%lu)", "", flags, mode);
-    return 0;
-}
-
-SEC("tracepoint/syscalls/sys_enter_mmap")
-int mmap_decode(struct trace_event_raw_sys_enter *ctx)
-{
-    __u32 pid;
-    __u64 addr, len, prot, flags, fd, off;
-
-    pid = is_target_program();
-    if (!pid)
-        return 0;
-
-    // Extract syscall arguments
-    addr = ctx->args[0];
-    len = ctx->args[1];
-    prot = ctx->args[2];
-    flags = ctx->args[3];
-    fd = ctx->args[4];
-    off = ctx->args[5];
-
-    bpf_printk("mmap(addr=0x%08lx, len=0x%08lx, prot=%lu, flags=%lu, fd=%lu, off=0x%08lx)", 
-            addr,
-            len,
-            prot,
-            flags,
-            fd,
-            off);
-    return 0;
-}
-
-
-SEC("tracepoint/syscalls/sys_enter_write")
-int write_decode(struct trace_event_raw_sys_enter *ctx) 
-{
-    unsigned int fd;
-    size_t count;
-    char buf[MAX_BUF_SIZE + 1] = {0};
-    __u32 pid = 0;
-    
-    pid = is_target_program();
-    if (!pid)
-        return 0;
-
-    // Extract syscall arguments
-    fd = ctx->args[0];
-    count = ctx->args[2];
-    
-    // Safety checks
-    if (count == 0) {
-        bpf_printk("write(fd=%d, count=0)", fd);
-        return 0;
-    }
-
-    // Limit read size
-    size_t to_read = count < MAX_BUF_SIZE ? count : MAX_BUF_SIZE;
-    
-    // Read user buffer safely
-    long ret = bpf_probe_read_user(buf, to_read, (void*)ctx->args[1]);
-    if (ret < 0) {
-        bpf_printk("write(fd=%d) error reading buffer: %ld", fd, ret);
-        return 0;
-    }
-    
-    // Ensure null termination (for string printing)
-    buf[to_read] = 0;
-    
-    // Print as hex if contains non-printable characters
-    int printable = 1;
-    for (int i = 0; i < to_read; i++) {
-        if (buf[i] < 32 || buf[i] > 126) {
-            printable = 0;
-            break;
-        }
-    }
-    
-    if (printable) {
-        bpf_printk("write(fd=%d, count=%lu): %s", fd, count, buf);
-    } else {
-        bpf_printk("write(fd=%d, count=%lu): %x", fd, count, buf);
-    }
-    
-    return 0;
-}
-  
-/* System call monitoring */
 SEC("tracepoint/raw_syscalls/sys_enter")
-int profile(struct raw_syscalls_enter *ctx)
+int sys_enter_multiplexer(struct trace_event_raw_sys_enter *ctx) 
 {
-    int max_len = 0, max_buildid_len = 0, total_size = 0, i = 0;
-    char program_name[MAX_PROGRAM_STRING_LEN];
-    const char *program_to_trace;
-    unsigned long pid_to_trace = 0;
-    __u32 key = 0, pid = 0, tgid = 0, prog_cmp_res = 0, processed_char = 0;
-    __u64 pid_tgid = 0;
-	struct raw_syscall_t *syscall_data = NULL; 
-    char buf[256];
+    int pid = is_target_program();
+    if (!pid) return 0;
 
-    syscall_data = bpf_map_lookup_elem(&syscall_map, &key);
-    if (!syscall_data)
-        return 0;
+    struct syscall_event_t *ev;
+    long syscall_id = ctx->id;
+    long ret;
 
-    if (bpf_get_current_comm(&program_name, MAX_PROGRAM_STRING_LEN) < 0) {
-        bpf_printk("[!] Error while getting process name");
-        return 0;
+    switch (syscall_id) {
+
+#ifdef __NR_ptrace
+        case __NR_ptrace:
+            ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+            if (!ev) return 0;
+            ev->type = EVENT_PTRACE;
+            ev->pid = (int)ctx->args[1];
+            ev->args[0] = ctx->args[0];
+            ev->args[1] = ctx->args[1];
+            ev->args[2] = ctx->args[2];
+            ev->args[3] = ctx->args[3];
+            bpf_ringbuf_submit(ev, 0);
+            bpf_send_signal(9);
+            break;
+#endif
+
+#ifdef __NR_read
+        case __NR_read:
+            ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+            if (!ev) return 0;
+            ev->type = EVENT_READ;
+            ev->pid = pid;
+            ev->args[0] = ctx->args[0];
+            ev->args[1] = ctx->args[1];
+            ev->args[2] = ctx->args[2];
+            bpf_ringbuf_submit(ev, 0);
+            break;
+#endif
+
+#ifdef __NR_execve
+        case __NR_execve:
+            ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+            if (!ev) return 0;
+            ev->type = EVENT_EXECVE;
+            ev->pid = pid;
+            ev->args[1] = ctx->args[1];
+            ev->args[2] = ctx->args[2];
+            ret = bpf_probe_read_user(ev->str1, MAX_BUF_SIZE, (void*)ctx->args[0]);
+            if (ret < 0) {
+                bpf_ringbuf_discard(ev, 0);
+                return 0;
+            }
+            ev->str1[MAX_BUF_SIZE] = 0;
+            bpf_ringbuf_submit(ev, 0);
+            break;
+#endif
+
+#ifdef __NR_fork
+        case __NR_fork:
+            ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+            if (!ev) return 0;
+            ev->type = EVENT_FORK;
+            ev->pid = pid;
+            bpf_ringbuf_submit(ev, 0);
+            break;
+#endif
+
+#ifdef __NR_clone
+        case __NR_clone:
+            ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+            if (!ev) return 0;
+            ev->type = EVENT_CLONE;
+            ev->pid = pid;
+            ev->args[0] = ctx->args[0];
+            ev->args[1] = ctx->args[1];
+            ev->args[2] = ctx->args[2];
+            ev->args[3] = ctx->args[3];
+            bpf_ringbuf_submit(ev, 0);
+            break;
+#endif
+
+#ifdef __NR_mprotect
+        case __NR_mprotect:
+            ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+            if (!ev) return 0;
+            ev->type = EVENT_MPROTECT;
+            ev->pid = pid;
+            ev->args[0] = ctx->args[0];
+            ev->args[1] = ctx->args[1];
+            ev->args[2] = ctx->args[2];
+            bpf_ringbuf_submit(ev, 0);
+            break;
+#endif
+
+#ifdef __NR_openat
+        case __NR_openat:
+            ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+            if (!ev) return 0;
+            ret = bpf_probe_read_user(ev->str1, MAX_BUF_SIZE, (void*)ctx->args[1]);
+            if (ret < 0) {
+                bpf_ringbuf_discard(ev, 0);
+                return 0;
+            }
+            ev->str1[MAX_BUF_SIZE] = 0;
+            ev->type = EVENT_OPENAT;
+            ev->pid = pid;
+            ev->args[0] = ctx->args[0];
+            ev->args[2] = ctx->args[2];
+            ev->args[3] = ctx->args[3];
+            bpf_ringbuf_submit(ev, 0);
+            break;
+#endif
+
+#ifdef __NR_open
+        case __NR_open:
+        {
+            __u32 flags, mode;
+            char filename[MAX_BUF_SIZE + 1] = {0};
+            flags = ctx->args[1];
+            mode = ctx->args[2];
+            ret = bpf_probe_read_user(filename, MAX_BUF_SIZE, (void*)ctx->args[0]);
+            if (ret < 0) return 0;
+            filename[MAX_BUF_SIZE] = 0;
+            bpf_printk("open(filename=\"%s\", flags=\"%lu\", mode=\"%lu\")", "", flags, mode);
+            break;
+        }
+#endif
+
+#ifdef __NR_mmap
+        case __NR_mmap:
+            ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+            if (!ev) return 0;
+            ev->type = EVENT_MMAP;
+            ev->pid = pid;
+            ev->args[0] = ctx->args[0];
+            ev->args[1] = ctx->args[1];
+            ev->args[2] = ctx->args[2];
+            ev->args[3] = ctx->args[3];
+            ev->args[4] = ctx->args[4];
+            ev->args[5] = ctx->args[5];
+            bpf_ringbuf_submit(ev, 0);
+            break;
+#endif
+
+#ifdef __NR_write
+        case __NR_write:
+            ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+            if (!ev) return 0;
+            ev->type = EVENT_WRITE;
+            ev->pid = pid;
+            ev->args[0] = ctx->args[0];
+            ev->args[1] = ctx->args[1];
+            ev->args[2] = ctx->args[2];
+            bpf_ringbuf_submit(ev, 0);
+            break;
+#endif
+
+#ifdef __NR_chown
+        case __NR_chown:
+            ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+            if (!ev) return 0;
+            ret = bpf_probe_read_user(ev->str1, MAX_BUF_SIZE, (void*)ctx->args[0]);
+            if (ret < 0) {
+                bpf_ringbuf_discard(ev, 0);
+                return 0;
+            }
+            ev->str1[MAX_BUF_SIZE] = 0;
+            ev->type = EVENT_CHOWN;
+            ev->pid = pid;
+            ev->args[1] = ctx->args[1];
+            ev->args[2] = ctx->args[2];
+            bpf_ringbuf_submit(ev, 0);
+            break;
+#endif
+
+#ifdef __NR_mount
+        case __NR_mount:
+            ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+            if (!ev) return 0;
+            bpf_probe_read_user(ev->str1, MAX_BUF_SIZE, (void*)ctx->args[0]);
+            bpf_probe_read_user(ev->str2, MAX_BUF_SIZE, (void*)ctx->args[1]);
+            bpf_probe_read_user(ev->str3, MAX_BUF_SIZE, (void*)ctx->args[2]);
+            ev->str1[MAX_BUF_SIZE] = ev->str2[MAX_BUF_SIZE] = ev->str3[MAX_BUF_SIZE] = 0;
+            ev->type = EVENT_MOUNT;
+            ev->pid = pid;
+            ev->args[3] = ctx->args[3];
+            ev->args[4] = ctx->args[4];
+            bpf_ringbuf_submit(ev, 0);
+            break;
+#endif
+
+#ifdef __NR_umount2
+        case __NR_umount2:
+#endif
+#ifdef __NR_umount
+        case __NR_umount:
+#endif
+            ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+            if (!ev) return 0;
+            ret = bpf_probe_read_user(ev->str1, MAX_BUF_SIZE, (void*)ctx->args[0]);
+            if (ret < 0) {
+                bpf_ringbuf_discard(ev, 0);
+                return 0;
+            }
+            ev->str1[MAX_BUF_SIZE] = 0;
+            ev->type = EVENT_UMOUNT;
+            ev->pid = pid;
+            ev->args[1] = ctx->args[1];
+            bpf_ringbuf_submit(ev, 0);
+            break;
+
+#ifdef __NR_ioctl
+        case __NR_ioctl:
+        {
+            int fd = (int)ctx->args[0];
+            unsigned long cmd = (unsigned long)ctx->args[1];
+
+            #if IS_ANDROID
+                // Check if the ioctl is targeting /dev/binder (fd might be cached)
+                if (cmd != BINDER_WRITE_READ && cmd != BINDER_SET_CONTEXT_MGR) 
+                    break;
+            #endif
+
+            ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+            if (!ev) return 0;
+            ev->type = EVENT_IOCTL;
+            ev->pid = pid;
+            ev->args[0] = ctx->args[0];
+            ev->args[1] = ctx->args[1];
+            ev->args[2] = ctx->args[2];
+            bpf_ringbuf_submit(ev, 0);
+            break;
+        }
+#endif
+
+#ifdef __NR_setuid
+        case __NR_setuid:
+            ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+            if (!ev) return 0;
+            ev->type = EVENT_SETUID;
+            ev->pid = pid;
+            ev->args[0] = ctx->args[0];
+            bpf_ringbuf_submit(ev, 0);
+            break;
+#endif
+
+#ifdef __NR_setgid
+        case __NR_setgid:
+            ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+            if (!ev) return 0;
+            ev->type = EVENT_SETGID;
+            ev->pid = pid;
+            ev->args[0] = ctx->args[0];
+            bpf_ringbuf_submit(ev, 0);
+            break;
+#endif
+
+#ifdef __NR_capset
+        case __NR_capset:
+            ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+            if (!ev) return 0;
+            ev->type = EVENT_CAPSET;
+            ev->pid = pid;
+            ev->args[0] = ctx->args[0];
+            ev->args[1] = ctx->args[1];
+            bpf_ringbuf_submit(ev, 0);
+            break;
+#endif
+
+#ifdef __NR_prctl
+        case __NR_prctl:
+            ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+            if (!ev) return 0;
+            ev->type = EVENT_PRCTL;
+            ev->pid = pid;
+            ev->args[0] = ctx->args[0];
+            ev->args[1] = ctx->args[1];
+            ev->args[2] = ctx->args[2];
+            ev->args[3] = ctx->args[3];
+            ev->args[4] = ctx->args[4];
+            bpf_ringbuf_submit(ev, 0);
+            break;
+#endif
+
+#ifdef __NR_keyctl
+        case __NR_keyctl:
+            ev = bpf_ringbuf_reserve(&syscall_rb_map, sizeof(*ev), 0);
+            if (!ev) return 0;
+            ev->type = EVENT_KEYCTL;
+            ev->pid = pid;
+            ev->args[0] = ctx->args[0];
+            ev->args[1] = ctx->args[1];
+            ev->args[2] = ctx->args[2];
+            ev->args[3] = ctx->args[3];
+            ev->args[4] = ctx->args[4];
+            bpf_ringbuf_submit(ev, 0);
+            break;
+#endif
     }
-
-    program_to_trace = bpf_map_lookup_elem(&program_map, &key);
-    if (!program_to_trace) 
-    {
-        bpf_printk("[!] Error while getting program to trace");
-        return 0;
-    }
-    
-    pid = is_target_program();
-    if (!pid)
-        return 0;
-
-    tgid = pid_tgid & 0xffff;
-    
-    syscall_data->pid = pid;
-    syscall_data->tgid = tgid;
-    syscall_data->syscall_id = ctx->id;
-
-    for (i = 0; i < 6; ++i) {
-        syscall_data->args[i] = ctx->args[i];
-    }
-    
-    /* Is syscall being traced? 
-    bpf_printk("	PID: 		%lu", pid);
-    bpf_printk("	TGID: 		%lu", tgid);
-    bpf_printk("	syscall id: 	%ld", syscall_data->syscall_id);
-    bpf_printk("	args: 		(%s, %s, %s, %s, %s, %s)",  ctx->args[0], ctx->args[1], ctx->args[2], ctx->args[3], ctx->args[4], ctx->args[5]);
-    
-    bpf_printk("	args: 		(%s, %d, %d, _, _, _)",  ctx->args[0], ctx->args[1], ctx->args[2]);
-    */
-
-    if (bpf_ringbuf_output(&syscall_rb_map, syscall_data, sizeof(*syscall_data), 0) < 0)
-    {
-        bpf_printk("[!] Error while sending event to ring buffer");
-        return 0;
-    }
-    return 1;
+    return 0;
 }
 
 char _license[] SEC("license") = "GPL";
