@@ -158,8 +158,11 @@ $(BPFTOOL): | $(BPFTOOL_OUTPUT)
 	$(call msg,BPFTOOL,$@)
 	$(Q)$(MAKE) ARCH= CROSS_COMPILE= OUTPUT=$(BPFTOOL_OUTPUT)/ -C $(BPFTOOL_SRC) bootstrap
 
-# Building blazesym
-$(LIBBLAZESYM_OBJ): 
+# Building blazesym. Upstream does not version its Cargo.lock, so ours pins
+# the Rust dependencies of the release binaries (refresh it with
+# `cargo update` in blazesym/ when moving the submodule)
+$(LIBBLAZESYM_OBJ): blazesym.Cargo.lock
+	$(Q)cp blazesym.Cargo.lock $(LIBBLAZESYM_SRC)/Cargo.lock
 	$(Q)cd $(LIBBLAZESYM_SRC)/capi && $(CARGO) build --release --locked
 	$(call msg,LIB,$@)
 	$(Q)cp $@ $(OUTPUT)
