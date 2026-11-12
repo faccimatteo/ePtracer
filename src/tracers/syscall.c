@@ -277,6 +277,6 @@ void* syscall_tracer(void *syscall_tracer_arguments)
 	log_debug("[+] Ring buffer successfully created\n");
 
 	log_debug("[+] Polling events from ring buffer...\n");
-	while ((ret = ring_buffer__poll(ring_buf, 100)) >= 0) {}
+	while (!stop_requested && (ret = ring_buffer__poll(ring_buf, 100)) >= 0) {}
 	return NULL;
 }

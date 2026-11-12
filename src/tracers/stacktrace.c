@@ -247,6 +247,6 @@ void *stack_tracer(void *stack_tracer_arguments)
 	}
 	log_debug("[+] Perf buffer successfully created\n");
 	log_debug("[+] Polling events from perf buffer...\n");
-	while ((ret = perf_buffer__poll(perf_buf, 100)) >= 0) {}
+	while (!stop_requested && (ret = perf_buffer__poll(perf_buf, 100)) >= 0) {}
 	return NULL;
 }

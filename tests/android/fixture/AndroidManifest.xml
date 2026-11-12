@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Test fixture of the Android e2e suite: an app the tests drive with
+     `am start`, so ePtracer has to find it by package (zygote fork, no exec). -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.eptracer.e2e">
+    <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="34" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application android:label="ePtracer e2e" android:usesCleartextTraffic="true">
+        <activity android:name=".E2EActivity" android:exported="true" />
+    </application>
+</manifest>

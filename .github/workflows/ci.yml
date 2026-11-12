@@ -1,0 +1,276 @@
+name: ci
+
+# One static (musl) binary per architecture, valid for every Linux distribution
+# and for Android, then the same binary through three test matrices:
+#
+#   kernel   little-vm-helper VMs, one kernel each, 5.4 (must be refused) .. bpf-next
+#   distro   privileged containers on the runner kernel: the TLS libraries and
+#            paths each distribution ships, on x86_64 and arm64
+#   android  emulator, one API level each, 30 (kernel 5.4: must be refused) .. 36
+#
+# A v* tag publishes the binaries as a GitHub release once everything passed.
+
+on:
+  push:
+    branches: [main, http-decoder]
+    tags: ["v*"]
+  pull_request:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  build:
+    name: build ${{ matrix.arch }}
+    strategy:
+      matrix:
+        include:
+          - { arch: x86_64,  runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Build the static binary (Alpine, musl)
+        run: ./scripts/build-static.sh
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Build the Go test client
+        working-directory: tests/e2e/goclient
+        run: CGO_ENABLED=0 go build -trimpath -o ../../../dist/goclient-${{ matrix.arch }} .
+
+      - name: Unit tests
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libssl-dev libelf-dev >/dev/null
+          bench/run_unit.sh
+
+      - name: Smoke test
+        run: |
+          file dist/eptracer-${{ matrix.arch }}
+          dist/eptracer-${{ matrix.arch }} --help >/dev/null
+          sudo dist/eptracer-${{ matrix.arch }} --check
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-${{ matrix.arch }}
+          path: dist/
+          if-no-files-found: error
+
+  kernel:
+    name: kernel ${{ matrix.kernel }}
+    needs: build
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        kernel: ["5.10", "5.15", "6.1", "6.6", "6.12", "6.18", "rhel9.7", "bpf-next"]
+        include:
+          # below the support floor: passes when ePtracer refuses to run
+          - kernel: "5.4"
+            expect: --expect-unsupported
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist-x86_64
+          path: dist
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          chmod +x dist/*
+
+      - name: Run the e2e suite in a ${{ matrix.kernel }} VM
+        uses: cilium/little-vm-helper@v0.0.33
+        with:
+          test-name: eptracer-${{ matrix.kernel }}
+          image: complexity-test
+          image-version: ${{ matrix.kernel }}-main
+          host-mount: ./
+          install-dependencies: "true"
+          cmd: |
+            uname -a
+            if command -v apt-get >/dev/null; then
+              DEBIAN_FRONTEND=noninteractive apt-get update -qq || true
+              DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+                python3 openssl curl gnutls-bin ca-certificates >/dev/null || true
+            elif command -v dnf >/dev/null; then
+              dnf install -y -q python3 openssl curl gnutls-utils || true
+            fi
+            mountpoint -q /sys/kernel/tracing || mount -t tracefs nodev /sys/kernel/tracing || true
+            cd /host
+            EPTRACER=/host/dist/eptracer-x86_64 GO_CLIENT=/host/dist/goclient-x86_64 \
+              bash tests/e2e/run.sh --out /host/results ${{ matrix.expect }}
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: results-kernel-${{ matrix.kernel }}
+          path: results/
+
+  distro:
+    name: distro ${{ matrix.image }} ${{ matrix.arch }}
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+        image:
+          - ubuntu:20.04          # OpenSSL 1.1.1, GnuTLS 3.6
+          - ubuntu:22.04
+          - ubuntu:24.04
+          - debian:12
+          - debian:13
+          - fedora:latest
+          - rockylinux/rockylinux:9
+          - alpine:3.22           # musl userland
+          - opensuse/tumbleweed
+        include:
+          - { arch: x86_64,  runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+          # no arm64 image
+          - { arch: x86_64,  runner: ubuntu-24.04, image: "archlinux:latest" }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist-${{ matrix.arch }}
+          path: dist
+
+      - name: Run the e2e suite in ${{ matrix.image }}
+        run: |
+          chmod +x dist/*
+          tag="$(echo '${{ matrix.image }}' | tr '/:' '__')"
+          echo "TAG=$tag" >> "$GITHUB_ENV"
+          OUT="$PWD/results" GO_CLIENT="$PWD/dist/goclient-${{ matrix.arch }}" \
+            tests/distro/run.sh '${{ matrix.image }}'
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: results-distro-${{ env.TAG }}-${{ matrix.arch }}
+          path: results/${{ env.TAG }}/
+
+  android:
+    name: android API ${{ matrix.api }}
+    needs: build
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [31, 32, 33, 34, 35, 36]
+        include:
+          # Android 11, kernel 5.4: passes when ePtracer refuses to run
+          - api: 30
+            expect: --expect-unsupported
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist-x86_64
+          path: dist
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Build the fixture app
+        run: tests/android/fixture/build.sh
+
+      - name: Run the e2e suite on the emulator
+        uses: reactivecircus/android-emulator-runner@v2.38.0
+        with:
+          api-level: ${{ matrix.api }}
+          target: google_apis
+          arch: x86_64
+          force-avd-creation: true
+          disable-animations: true
+          emulator-options: -no-window -no-audio -no-boot-anim -no-snapshot -gpu swiftshader_indirect
+          # the action runs every line of `script` on its own: keep it one line
+          script: tests/android/run.sh --out "$PWD/results" ${{ matrix.expect }}
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: results-android-api${{ matrix.api }}
+          path: results/
+
+  report:
+    name: compatibility report
+    needs: [kernel, distro, android]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: results-*
+          path: results
+
+      - name: Compatibility table
+        run: tests/report.py results | tee -a "$GITHUB_STEP_SUMMARY"
+
+  release:
+    name: release
+    needs: [kernel, distro, android]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: dist-*
+          path: dl
+          merge-multiple: true
+
+      - name: Package
+        run: |
+          mkdir release
+          for arch in x86_64 aarch64; do
+            cp "dl/eptracer-$arch" "release/eptracer-${GITHUB_REF_NAME}-linux-$arch"
+          done
+          chmod +x release/*
+          (cd release && sha256sum eptracer-* > SHA256SUMS)
+          cat release/SHA256SUMS
+
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: release/eptracer-*
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release/* --repo "$GITHUB_REPOSITORY" \
+            --title "ePtracer $GITHUB_REF_NAME" --generate-notes

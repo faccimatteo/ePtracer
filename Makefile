@@ -16,35 +16,22 @@ BPFTOOL_SRC 		:= $(abspath ./bpftool/src)
 LIBBPF_OBJ 			:= $(abspath $(OUTPUT)/libbpf.a)
 BPFTOOL_OUTPUT 		?= $(abspath $(OUTPUT)/bpftool)
 BPFTOOL 			?= $(BPFTOOL_OUTPUT)/bootstrap/bpftool
-LDLIBS				?= 	-lcurl			\
-						-lnghttp2		\
-						-lidn2			\
-						-lrtmp			\
-						-lssh			\
-						-lpsl			\
-						-lssl			\
-						-lcrypto		\
-						-lzstd			\
-						-lz				\
-						-lgnutls		\
-						-lsasl2			\
-						-ltasn1			\
-						-lffi			\
-						-lbrotlidec		\
-						-lldap			\
-						-llber			\
-						-lgssapi_krb5	\
-						-lkrb5			\
-						-lk5crypto		\
-						-lzstd			\
-						-lutil			\
-						-lrt			\
-						-lpthread		\
-						-lm				\
-						-ldl			\
-						-lc				\
-						-lelf			\
-						-lz
+# Only what the code actually includes: libbpf needs libelf + zlib (and zstd
+# when libelf was built with it), the HTTP side OpenSSL and nghttp2. pkg-config
+# resolves the transitive dependencies, which is what a static link needs.
+STATIC				?= 0
+PKG_CONFIG			?= pkg-config
+PKGS				:= libelf zlib openssl libnghttp2
+ifeq ($(STATIC),1)
+PKG_LIBS			:= $(shell $(PKG_CONFIG) --static --libs $(PKGS) 2>/dev/null)
+EXTRA_LDFLAGS		+= -static
+else
+PKG_LIBS			:= $(shell $(PKG_CONFIG) --libs $(PKGS) 2>/dev/null)
+endif
+ifeq ($(strip $(PKG_LIBS)),)
+PKG_LIBS			:= -lelf -lz -lzstd -lssl -lcrypto -lnghttp2
+endif
+LDLIBS				?= $(PKG_LIBS) -lpthread -lm -ldl -lrt
 
 # CROSS_COMPILE		?= "" 
 ARCH 				?= $(shell uname -m | sed 's/x86_64/x86/' \
@@ -62,6 +49,7 @@ INCLUDES 			:= -I$(OUTPUT) -I./libbpf/include/uapi \
 					   -I$(dir $(VMLINUX)) -I$(HEADERS_SRC)
 
 CFLAGS 				:= -O2 -Wall -Wformat -Wformat=2 -Wconversion -Wimplicit-fallthrough \
+						-D_GNU_SOURCE \
 						-Werror=format-security \
 						-U_FORTIFY_SOURCE -D_FORTIFY_SOURCE=3 \
 						-D_GLIBCXX_ASSERTIONS \
@@ -69,6 +57,12 @@ CFLAGS 				:= -O2 -Wall -Wformat -Wformat=2 -Wconversion -Wimplicit-fallthrough 
 						-Wl,-z,nodlopen -Wl,-z,noexecstack \
 						-Wl,-z,relro -Wl,-z,now \
 						-Wl,--as-needed -Wl,--no-copy-dt-needed-entries
+# A static binary carries its own OpenSSL: the system openssl.cnf belongs to
+# another build (providers, engines, FIPS modules it does not have)
+ifeq ($(STATIC),1)
+CFLAGS				+= -DEPTRACER_STATIC
+endif
+
 ALL_LDFLAGS 		:= $(LDFLAGS) $(EXTRA_LDFLAGS) $(LDLIBS)
 
 APPS 				= eptracer 
@@ -148,7 +142,7 @@ $(LIBARGPARSE_OBJ): $(LIBARGPARSE_SRC)
 # Create libbpf symlink from bpftool if it does not exists
 LIBBPF_PATH := ./libbpf
 ifeq (,$(wildcard $(LIBBPF_PATH)))
-$(shell ln -s $(abspath ./bpftool/libbpf) libbpf)
+$(shell ln -sfn bpftool/libbpf libbpf)
 endif
 
 # Build libbpf
@@ -156,7 +150,7 @@ $(LIBBPF_OBJ): $(wildcard $(LIBBPF_SRC)/*.[ch] $(LIBBPF_SRC)/Makefile) | $(OUTPU
 	$(call msg,LIB,$@)
 	$(Q)$(MAKE) -C $(LIBBPF_SRC) BUILD_STATIC_ONLY=1		\
 		OBJDIR=$(dir $@)libbpf DESTDIR=$(dir $@)			\
-		INCLUDEDIR= LIBDIR= UAPIDIR= ARCH=arm64				\
+		INCLUDEDIR= LIBDIR= UAPIDIR=						\
 		install
 
 # Build bpftool
@@ -194,9 +188,11 @@ $(OUTPUT)/%.bpf.o: $(SRC)/%.bpf.c $(LIBBPF_OBJ) $(wildcard $(OUTPUT)/%.skel.h) $
 # Build userspace code
 $(patsubst %,$(OUTPUT)/%.o,$(APPS)): %.o: %.skel.h
 
-$(OUTPUT)/%.o: $(SRC)/%.c $(wildcard %.h) | $(OUTPUT)
+# The tracers are #included by the entry point rather than compiled on their
+# own, so they have to be listed here for a change in one of them to rebuild
+$(OUTPUT)/%.o: $(SRC)/%.c $(wildcard $(SRC)/tracers/*.c) $(wildcard $(HEADERS_SRC)/*.h) | $(OUTPUT)
 	$(call msg,CC,$@)
-	$(Q)$(CC) $(CFLAGS) $(INCLUDES) -c $(filter %.c,$^) -o $@
+	$(Q)$(CC) $(CFLAGS) $(INCLUDES) -c $< -o $@
 
 $(patsubst %,$(OUTPUT)/%.o,$(BZS_APPS)): $(LIBBLAZESYM_HEADER)
 

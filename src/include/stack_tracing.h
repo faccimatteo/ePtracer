@@ -3,6 +3,8 @@
 #define MAX_STACK_RAWTP 100
 #define MAX_PROGRAM_STRING_LEN 100
 #define MAX_PROGRAM_TO_TRACE 10
+/* Processes followed at once when the descendants of the target are traced */
+#define MAX_TRACED_PROCESSES 4096
 
 struct stack_trace_t {
   	int pid;

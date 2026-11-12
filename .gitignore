@@ -2,6 +2,12 @@
 build/*
 .output
 .vscode
-eptracer
+/eptracer
 android-sysroot/
 android-bundle/
+libbpf
+verifier.log
+dist/
+tests/android/fixture/out/
+.claude/
+__pycache__/
