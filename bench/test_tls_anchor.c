@@ -208,8 +208,10 @@ static void test_real(void)
 	printf("[real images]\n");
 #if defined(__aarch64__)
 	const char *ssl = "/usr/lib/aarch64-linux-gnu/libssl.so.3";
+	const char *libc = "/usr/lib/aarch64-linux-gnu/libc.so.6";
 #else
 	const char *ssl = "/usr/lib/x86_64-linux-gnu/libssl.so.3";
+	const char *libc = "/usr/lib/x86_64-linux-gnu/libc.so.6";
 #endif
 	struct tls_anchor_hit hit;
 	int r = tls_anchor_find(ssl, &hit);
@@ -242,7 +244,7 @@ static void test_real(void)
 		unlink(tmp);
 	}
 
-	r = tls_anchor_find("/usr/lib/x86_64-linux-gnu/libc.so.6", &hit);
+	r = tls_anchor_find(libc, &hit);
 	CHECK(r == 1, "libc has no keylog labels: not resolved");
 
 	r = tls_anchor_find("/nonexistent", &hit);

@@ -30,6 +30,7 @@ jobs:
   build:
     name: build ${{ matrix.arch }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - { arch: x86_64,  runner: ubuntu-24.04 }
