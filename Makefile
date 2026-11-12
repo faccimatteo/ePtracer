@@ -160,7 +160,7 @@ $(BPFTOOL): | $(BPFTOOL_OUTPUT)
 
 # Building blazesym
 $(LIBBLAZESYM_OBJ): 
-	$(Q)cd $(LIBBLAZESYM_SRC)/capi && $(CARGO) build --release
+	$(Q)cd $(LIBBLAZESYM_SRC)/capi && $(CARGO) build --release --locked
 	$(call msg,LIB,$@)
 	$(Q)cp $@ $(OUTPUT)
 

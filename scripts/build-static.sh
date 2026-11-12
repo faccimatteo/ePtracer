@@ -10,7 +10,8 @@
 # Output: dist/eptracer-<arch>
 set -eu
 
-ALPINE_IMAGE=${ALPINE_IMAGE:-alpine:3.22}
+# pinned by digest (multi-arch index): the release binaries are built in it
+ALPINE_IMAGE=${ALPINE_IMAGE:-alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 
 if [ "${1:-}" != "--inside" ]; then

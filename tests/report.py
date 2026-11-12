@@ -5,7 +5,7 @@ Compatibility table from the e2e results.
   tests/report.py DIR
 
 DIR holds one sub-directory per tested target (the CI artifacts
-`results-<suite>-<target>`), each with the results.tsv written by
+`eptracer-<suite>-<target>`), each with the results.tsv written by
 tests/e2e/run.sh or tests/android/run.sh. Prints a Markdown table per suite,
 targets as rows and scenarios as columns, for $GITHUB_STEP_SUMMARY and the
 README.
@@ -23,9 +23,9 @@ def load(root):
     data = {}
     for d in sorted(os.listdir(root)):
         tsv = os.path.join(root, d, "results.tsv")
-        if not d.startswith("results-") or not os.path.isfile(tsv):
+        if not d.startswith("eptracer-") or not os.path.isfile(tsv):
             continue
-        suite, _, target = d[len("results-"):].partition("-")
+        suite, _, target = d[len("eptracer-"):].partition("-")
         rows = {}
         with open(tsv) as f:
             for line in f:

@@ -1,0 +1,11 @@
+# Keeps the SHA-pinned actions of the workflows current (the "# vX" comment
+# next to each pin is updated together with the hash)
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

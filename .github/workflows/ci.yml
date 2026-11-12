@@ -44,14 +44,15 @@ jobs:
           - { arch: aarch64, runner: ubuntu-24.04-arm }
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           submodules: recursive
+          persist-credentials: false
 
       - name: Build the static binary (Alpine, musl)
         run: ./scripts/build-static.sh
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: stable
           cache: false
@@ -72,7 +73,7 @@ jobs:
           dist/eptracer-${{ matrix.arch }} --help >/dev/null
           sudo dist/eptracer-${{ matrix.arch }} --check
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: dist-${{ matrix.arch }}
           path: dist/
@@ -91,9 +92,11 @@ jobs:
           - kernel: "5.4"
             expect: --expect-unsupported
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: dist-x86_64
           path: dist
@@ -106,7 +109,7 @@ jobs:
           chmod +x dist/*
 
       - name: Run the e2e suite in a ${{ matrix.kernel }} VM
-        uses: cilium/little-vm-helper@v0.0.33
+        uses: cilium/little-vm-helper@c8b0bfbae3bdda7bc69fb9cd370e4b74ce84986d # v0.0.33
         with:
           test-name: eptracer-${{ matrix.kernel }}
           image: complexity-test
@@ -127,10 +130,10 @@ jobs:
             EPTRACER=/host/dist/eptracer-x86_64 GO_CLIENT=/host/dist/goclient-x86_64 \
               bash tests/e2e/run.sh --out /host/results ${{ matrix.expect }}
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
-          name: results-kernel-${{ matrix.kernel }}
+          name: eptracer-kernel-${{ matrix.kernel }}
           path: results/
 
   distro:
@@ -157,9 +160,11 @@ jobs:
           - { arch: x86_64,  runner: ubuntu-24.04, image: "archlinux:latest" }
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: dist-${{ matrix.arch }}
           path: dist
@@ -172,10 +177,10 @@ jobs:
           OUT="$PWD/results" GO_CLIENT="$PWD/dist/goclient-${{ matrix.arch }}" \
             tests/distro/run.sh '${{ matrix.image }}'
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
-          name: results-distro-${{ env.TAG }}-${{ matrix.arch }}
+          name: eptracer-distro-${{ env.TAG }}-${{ matrix.arch }}
           path: results/${{ env.TAG }}/
 
   android:
@@ -196,14 +201,16 @@ jobs:
           - api: 32
             expect: --expect-unsupported
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: dist-x86_64
           path: dist
 
-      - uses: actions/setup-java@v6
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
         with:
           distribution: temurin
           java-version: "21"
@@ -219,7 +226,7 @@ jobs:
         run: tests/android/fixture/build.sh
 
       - name: Run the e2e suite on the emulator
-        uses: reactivecircus/android-emulator-runner@v2.38.0
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
           api-level: ${{ matrix.api }}
           target: google_apis
@@ -230,10 +237,10 @@ jobs:
           # the action runs every line of `script` on its own: keep it one line
           script: tests/android/run.sh --out "$PWD/results" ${{ matrix.expect }}
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
-          name: results-android-api${{ matrix.api }}
+          name: eptracer-android-api${{ matrix.api }}
           path: results/
 
   report:
@@ -242,11 +249,13 @@ jobs:
     if: always()
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          pattern: results-*
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: eptracer-*
           path: results
 
       - name: Compatibility table
@@ -262,7 +271,7 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: dist-*
           path: dl
@@ -278,7 +287,7 @@ jobs:
           (cd release && sha256sum eptracer-* > SHA256SUMS)
           cat release/SHA256SUMS
 
-      - uses: actions/attest-build-provenance@v4
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4
         with:
           subject-path: release/eptracer-*
 
