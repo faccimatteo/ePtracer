@@ -108,9 +108,37 @@ void http_intercept_use_splice(int strict, int hold_ms, int bridge_port, const c
 static int splice_exec_event(void *ctx, void *data, size_t size)
 {
 	(void)ctx;
-	if (size >= sizeof(__u32) && splice_nexecs < SPLICE_MAX_EXECS)
+	if (size < sizeof(__u32))
+		return 0;
+	if (splice_nexecs < SPLICE_MAX_EXECS)
 		splice_execs[splice_nexecs++] = (pid_t)*(const __u32 *)data;
+	else
+		/* no room to remember it: a process left unprobed beats one
+		 * left stopped forever */
+		kill((pid_t)*(const __u32 *)data, SIGCONT);
 	return 0;
+}
+
+/* Is the process in the stopped state (T)? From /proc/<pid>/stat */
+static int splice_is_stopped(pid_t pid)
+{
+	char path[64], buf[256];
+	const char *p = NULL;
+	ssize_t n = 0;
+	int fd = -1;
+
+	snprintf(path, sizeof(path), "/proc/%d/stat", (int)pid);
+	fd = open(path, O_RDONLY | O_CLOEXEC);
+	if (fd < 0)
+		return 0;
+	n = read(fd, buf, sizeof(buf) - 1);
+	close(fd);
+	if (n <= 0)
+		return 0;
+	buf[n] = '\0';
+	/* "pid (comm) S ...": the comm may hold spaces and parentheses */
+	p = strrchr(buf, ')');
+	return p && p[1] == ' ' && p[2] == 'T';
 }
 
 static int splice_key_event(void *ctx, void *data, size_t size)
@@ -142,6 +170,11 @@ static void *splice_key_loop(void *unused)
 	int efd = ring_buffer__epoll_fd(splice_key_rb);
 	(void)unused;
 
+	/* the previous batch, checked once more: a continued process found
+	 * stopped again got a SIGSTOP that raced past its SIGCONT */
+	pid_t last[SPLICE_MAX_EXECS];
+	int nlast = 0;
+
 	while (splice_key_running && !stop_requested) {
 		struct epoll_event ev;
 		pid_t execs[SPLICE_MAX_EXECS];
@@ -164,7 +197,24 @@ static void *splice_key_loop(void *unused)
 			splice_probe_maps(execs[i]);
 			kill(execs[i], SIGCONT);
 		}
+		for (i = 0; i < nlast; i++)
+			if (splice_is_stopped(last[i])) {
+				log_debug("[?] pid %d still stopped after its probe: continued again",
+					  (int)last[i]);
+				kill(last[i], SIGCONT);
+			}
+		memcpy(last, execs, sizeof(*execs) * (size_t)n);
+		nlast = n;
 	}
+
+	/* never leave a traced process stopped behind */
+	pthread_mutex_lock(&splice_key_lock);
+	for (int i = 0; i < splice_nexecs; i++)
+		kill(splice_execs[i], SIGCONT);
+	splice_nexecs = 0;
+	pthread_mutex_unlock(&splice_key_lock);
+	for (int i = 0; i < nlast; i++)
+		kill(last[i], SIGCONT);
 	return NULL;
 }
 

@@ -2082,9 +2082,11 @@ int trace_exec(void *ctx)
     if (!ev)
         return 0;
     *ev = pid;
-    bpf_ringbuf_submit(ev, 0);
-    /* userspace sends SIGCONT for every pid it was told about */
+    /* stop first, tell userspace second: the other way round its SIGCONT can
+     * land before this SIGSTOP and leave the process stopped for good.
+     * Userspace sends SIGCONT for every pid it was told about. */
     bpf_send_signal(19 /* SIGSTOP */);
+    bpf_ringbuf_submit(ev, 0);
     return 0;
 }
 
@@ -2103,8 +2105,8 @@ int trace_dlopen(struct pt_regs *ctx)
     if (!ev)
         return 0;
     *ev = pid;
+    bpf_send_signal(19 /* SIGSTOP */);   /* before the event, as above */
     bpf_ringbuf_submit(ev, 0);
-    bpf_send_signal(19 /* SIGSTOP */);
     return 0;
 }
 
