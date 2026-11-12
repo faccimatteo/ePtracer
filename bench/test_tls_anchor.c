@@ -244,6 +244,23 @@ static void test_real(void)
 		unlink(tmp);
 	}
 
+	{
+		/* the HMAC fallback of OpenSSL builds that only log with a
+		 * callback: libcrypto's SHA-2 block functions must be found, on
+		 * arm64 too (hand-written assembly, adr to the constants, no CFI) */
+		char crypto[256];
+		struct tls_sha_hit sha[32];
+		snprintf(crypto, sizeof(crypto), "%.*s/libcrypto.so.3",
+			 (int)(strrchr(ssl, '/') - ssl), ssl);
+		int n = tls_anchor_find_hmac_crypto(crypto, sha, 32), n256 = 0, n512 = 0;
+		for (int k = 0; k < n; k++) {
+			n256 += sha[k].bits == 256;
+			n512 += sha[k].bits == 512;
+		}
+		CHECK(n256 > 0 && n512 > 0, "libcrypto SHA-256 and SHA-512 block functions found");
+		printf("    %s: %d SHA-256, %d SHA-512\n", crypto, n256, n512);
+	}
+
 	r = tls_anchor_find(libc, &hit);
 	CHECK(r == 1, "libc has no keylog labels: not resolved");
 

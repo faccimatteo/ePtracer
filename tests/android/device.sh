@@ -41,6 +41,19 @@ spawn)
 		sleep 0.25
 		i=$((i + 1))
 	done
+	if [ ! -f "$R/app.rc" ]; then
+		# the app never finished: where it is stuck, for the CI artifact
+		{
+			echo "== processes (state, wait channel)"
+			ps -A -o PID,PPID,S,WCHAN,NAME 2>/dev/null | grep -E 'app_process|app\.sh|eptracer|PID'
+			for p in $(pidof app_process app_process64 2>/dev/null); do
+				echo "== /proc/$p"; cat /proc/$p/status 2>/dev/null | grep -E 'State|SigBlk|TracerPid'
+				cat /proc/$p/wchan 2>/dev/null; echo
+			done
+			echo "== tcp"; cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | head -40
+			echo "== dmesg"; dmesg 2>/dev/null | tail -30
+		} > "$R/diag.txt" 2>&1
+	fi
 	stop_eptracer $epid
 	;;
 package)

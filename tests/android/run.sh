@@ -102,7 +102,7 @@ dsh "chmod 755 $D/eptracer $D/device.sh"
 
 fetch() {   # $1 scenario: bring its files back to $OUT/$1
 	mkdir -p "$OUT/$1"
-	for f in eptracer.log app.out app.err app.rc; do
+	for f in eptracer.log app.out app.err app.rc diag.txt; do
 		dsh "cat $D/$1/$f 2>/dev/null" | tr -d '\r' > "$OUT/$1/$f"
 	done
 	APP_RC="$(cat "$OUT/$1/app.rc")"; APP_RC="${APP_RC:-none}"

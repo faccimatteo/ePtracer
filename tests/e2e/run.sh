@@ -293,6 +293,33 @@ if want intercept; then
 	fi
 fi
 
+# ---------------------------------------------------------- -I, syscall redirect
+# The redirect Android 15+ falls back to (netd owns the cgroup connect hook
+# there), forced here so every kernel of the matrix exercises it
+if want intercept-raw; then
+	if [ -z "$IP" ]; then
+		result intercept-raw SKIP "no non-loopback IPv4 address"
+	elif ! have curl; then
+		result intercept-raw SKIP "curl missing"
+	else
+		proxy_start proxy-mitm
+		EPTRACER_FORCE_RAW_REDIRECT=1 ep_run intercept-raw \
+			"curl -sS --http1.1 --resolve $AUTH:$PORT_HTTPS:$ORIGIN_IP https://$AUTH:$PORT_HTTPS/ep-raw" \
+			-I 127.0.0.1:$PORT_PROXY --proxy-ca "$OUT/proxy-ca.crt" \
+			--intercept-port $PORT_LISTEN --intercept-ports $PORT_HTTPS -F
+		proxy_stop
+		if [ "$APP_RC" != 0 ]; then
+			result intercept-raw FAIL "curl exit code $APP_RC: $(head -c 200 "$OUT/intercept-raw/app.err")"
+		elif ! grep -q 'syscall entry' "$OUT/intercept-raw/eptracer.log"; then
+			result intercept-raw FAIL "the syscall-entry redirect was not the one in use"
+		elif grep -q 'request GET /ep-raw' "$OUT/proxy-mitm.log"; then
+			result intercept-raw PASS "connect(2) rewritten at the syscall entry, proxy reached"
+		else
+			result intercept-raw FAIL "the proxy never saw the request"
+		fi
+	fi
+fi
+
 # ---------------------------------------------------------------- -I splice
 if want splice; then
 	if [ -z "$IP" ]; then

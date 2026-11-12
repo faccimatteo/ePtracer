@@ -92,6 +92,13 @@ struct intercept_config_t {
 
 #ifndef __bpf__
 /*
+ * 1 when connect(2) has to be redirected at the syscall entry because the
+ * cgroup connect hook is held exclusively (netd, Android 15+). Asked before
+ * the BPF object is loaded.
+ */
+int http_intercept_needs_raw_redirect(void);
+
+/*
  * Starts the interceptor: loads the redirect programs into the cgroup
  * hierarchy and brings the loopback listener up.
  *

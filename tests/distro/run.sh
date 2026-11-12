@@ -36,7 +36,14 @@ mountpoint -q /sys/kernel/debug 2>/dev/null || mount -t debugfs nodev /sys/kerne
 . /etc/os-release 2>/dev/null && echo "userland: $PRETTY_NAME"
 '
 
-docker run --rm --privileged --pid=host --cgroupns=host \
+# the image for this machine's architecture, always: a tag once pulled for
+# another one would otherwise run emulated, where uprobes cannot work
+case "$(uname -m)" in
+aarch64 | arm64) platform=linux/arm64 ;;
+*) platform=linux/amd64 ;;
+esac
+
+docker run --rm --platform "$platform" --privileged --pid=host --cgroupns=host \
 	-v "$root:/src:ro" -v "$out:/out" \
 	-e EPTRACER="/src/dist/eptracer-$(uname -m)" -e GO_CLIENT="${GO_CLIENT:+/src/${GO_CLIENT#$root/}}" \
 	"$image" sh -c "$install

@@ -597,6 +597,12 @@ static void select_bpf_programs(struct eptracer_bpf *s, struct arguments *a, int
 		bpf_program__set_autoload(s->progs.get_stacktrace, false);
 	if (!a->show_syscall)
 		bpf_program__set_autoload(s->progs.sys_enter_multiplexer, false);
+	/* the syscall-entry connect redirect, only where the cgroup hook is
+	 * held exclusively (Android 15+): see http_intercept_needs_raw_redirect */
+	if (!a->intercept || !a->intercept[0] || !http_intercept_needs_raw_redirect()) {
+		bpf_program__set_autoload(s->progs.intercept_raw_connect, false);
+		bpf_program__set_autoload(s->progs.intercept_raw_connect_exit, false);
+	}
 	/* the TLS key capture is splice-only */
 	if (!splice) {
 		bpf_program__set_autoload(s->progs.probe_tls_keylog, false);
@@ -668,6 +674,8 @@ static void disable_http_autoattach(struct eptracer_bpf *skel)
 		skel->progs.intercept_connect4,
 		skel->progs.intercept_connect6,
 		skel->progs.intercept_getpeername4,
+		skel->progs.intercept_raw_connect,
+		skel->progs.intercept_raw_connect_exit,
 		/* placed by the TLS splice on the resolved keylog function, and the
 		 * exec watch that tells it about new executables */
 		skel->progs.probe_tls_keylog,

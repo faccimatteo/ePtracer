@@ -1654,6 +1654,159 @@ int intercept_connect4(struct bpf_sock_addr *ctx)
     return 1;
 }
 
+/* ------------------------------------------------------------------------
+ * connect(2) redirect without the cgroup hook.
+ *
+ * From Android 15 netd attaches its own cgroup connect4/connect6 programs to
+ * the cgroup root without BPF_F_ALLOW_MULTI: the kernel then refuses any other
+ * connect program anywhere in the hierarchy (EPERM), short of replacing
+ * netd's. There, the destination is rewritten in the process' own sockaddr at
+ * the syscall entry instead — the kernel copies it in right after — and put
+ * back at the exit, so the process never sees the change. Same slots, same
+ * listener as the cgroup programs. Only loaded when needed: the helper this
+ * takes (bpf_probe_write_user) is refused by a kernel in lockdown.
+ * ------------------------------------------------------------------------ */
+
+/* The sockaddr as the process wrote it, to restore at the syscall exit */
+struct intercept_saved_addr {
+    __u64 uaddr;
+    __u32 len;
+    __u8  bytes[28];   /* sizeof(struct sockaddr_in6) */
+};
+
+struct {
+    __uint(type, BPF_MAP_TYPE_HASH);
+    __uint(max_entries, 1024);
+    __type(key, __u64);    /* pid_tgid */
+    __type(value, struct intercept_saved_addr);
+} intercept_saved_map SEC(".maps");
+
+/* SOCK_STREAM over TCP? Read from the socket behind the fd, the way the cgroup
+ * hook gets it from its context: a UDP connect (DNS) must never be diverted. */
+static __always_inline int intercept_fd_is_tcp(__u32 fd)
+{
+    struct task_struct *task = (struct task_struct *)bpf_get_current_task();
+    struct file **fds = BPF_CORE_READ(task, files, fdt, fd);
+    unsigned int max_fds = BPF_CORE_READ(task, files, fdt, max_fds);
+    struct file *file = NULL;
+    struct socket *sock = NULL;
+
+    if (fd >= max_fds || bpf_probe_read_kernel(&file, sizeof(file), &fds[fd]) < 0 || !file)
+        return 0;
+    sock = BPF_CORE_READ(file, private_data);
+    if (!sock)
+        return 0;
+    return BPF_CORE_READ(sock, type) == SOCK_STREAM &&
+           BPF_CORE_READ(sock, sk, sk_protocol) == IPPROTO_TCP;
+}
+
+SEC("tracepoint/raw_syscalls/sys_enter")
+int intercept_raw_connect(struct trace_event_raw_sys_enter *ctx)
+{
+    struct intercept_config_t *cfg = NULL;
+    struct intercept_saved_addr saved = {};
+    __u64 pid_tgid = 0;
+    void *uaddr = NULL;
+    __u16 family = 0, dport = 0;
+    __u32 len = 0;
+    int slot = 0;
+
+    if (ctx->id != __NR_connect)
+        return 0;
+    cfg = get_intercept_config();
+    if (!cfg || !cfg->enabled)
+        return 0;
+    pid_tgid = bpf_get_current_pid_tgid();
+    if ((__u32)(pid_tgid >> 32) == cfg->tracer_pid || !is_target_program())
+        return 0;
+
+    uaddr = (void *)ctx->args[1];
+    len = (__u32)ctx->args[2];
+    if (bpf_probe_read_user(&family, sizeof(family), uaddr) < 0)
+        return 0;
+
+    if (family == AF_INET) {
+        struct sockaddr_in sa = {};
+
+        if (len < sizeof(sa) || bpf_probe_read_user(&sa, sizeof(sa), uaddr) < 0)
+            return 0;
+        dport = bpf_ntohs(sa.sin_port);
+        if ((bpf_ntohl(sa.sin_addr.s_addr) >> 24) == 127 ||
+            !intercept_port_wanted(cfg, dport) || !intercept_fd_is_tcp((__u32)ctx->args[0]))
+            return 0;
+        slot = intercept_take_slot();
+        if (slot < 0)
+            return 0;
+        __builtin_memcpy(saved.bytes, &sa, sizeof(sa));
+        saved.len = sizeof(sa);
+        intercept_park_dst((__u32)slot, 4, &sa.sin_addr.s_addr, dport);
+        sa.sin_addr.s_addr = intercept_slot_addr((__u32)slot);
+        sa.sin_port = bpf_htons(cfg->listen_port);
+        saved.uaddr = (__u64)uaddr;
+        if (bpf_probe_write_user(uaddr, &sa, sizeof(sa)) == 0)
+            bpf_map_update_elem(&intercept_saved_map, &pid_tgid, &saved, BPF_ANY);
+    } else if (family == AF_INET6) {
+        struct sockaddr_in6 sa = {};
+        __u32 *w = NULL;
+        __u8 park_family = 6;
+
+        if (len < sizeof(sa) || bpf_probe_read_user(&sa, sizeof(sa), uaddr) < 0)
+            return 0;
+        dport = bpf_ntohs(sa.sin6_port);
+        w = (__u32 *)&sa.sin6_addr;
+        if (w[0] == 0 && w[1] == 0) {
+            if (w[2] == 0 && bpf_ntohl(w[3]) == 1)
+                return 0;   /* ::1 */
+            if (w[2] == bpf_htonl(0x0000ffffu)) {
+                if ((bpf_ntohl(w[3]) >> 24) == 127)
+                    return 0;
+                park_family = 4;   /* v4 mapped: an IPv4 connection */
+            }
+        }
+        if (!intercept_port_wanted(cfg, dport) || !intercept_fd_is_tcp((__u32)ctx->args[0]))
+            return 0;
+        slot = intercept_take_slot();
+        if (slot < 0)
+            return 0;
+        __builtin_memcpy(saved.bytes, &sa, sizeof(sa));
+        saved.len = sizeof(sa);
+        if (park_family == 4)
+            intercept_park_dst((__u32)slot, 4, &w[3], dport);
+        else
+            intercept_park_dst((__u32)slot, 6, w, dport);
+        /* through the v4 mapped loopback, as the cgroup connect6 hook does */
+        w[0] = 0;
+        w[1] = 0;
+        w[2] = bpf_htonl(0x0000ffffu);
+        w[3] = intercept_slot_addr((__u32)slot);
+        sa.sin6_port = bpf_htons(cfg->listen_port);
+        saved.uaddr = (__u64)uaddr;
+        if (bpf_probe_write_user(uaddr, &sa, sizeof(sa)) == 0)
+            bpf_map_update_elem(&intercept_saved_map, &pid_tgid, &saved, BPF_ANY);
+    }
+    return 0;
+}
+
+SEC("tracepoint/raw_syscalls/sys_exit")
+int intercept_raw_connect_exit(struct trace_event_raw_sys_exit *ctx)
+{
+    __u64 pid_tgid = bpf_get_current_pid_tgid();
+    struct intercept_saved_addr *saved = NULL;
+
+    if (ctx->id != __NR_connect)
+        return 0;
+    saved = bpf_map_lookup_elem(&intercept_saved_map, &pid_tgid);
+    if (!saved)
+        return 0;
+    /* the kernel has its copy: give the process its own address back */
+    if (saved->len == sizeof(struct sockaddr_in))
+        bpf_probe_write_user((void *)saved->uaddr, saved->bytes, sizeof(struct sockaddr_in));
+    else
+        bpf_probe_write_user((void *)saved->uaddr, saved->bytes, sizeof(struct sockaddr_in6));
+    bpf_map_delete_elem(&intercept_saved_map, &pid_tgid);
+    return 0;
+}
+
 SEC("cgroup/connect6")
 int intercept_connect6(struct bpf_sock_addr *ctx)
 {

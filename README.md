@@ -136,7 +136,10 @@ In practice:
 - **Android** — devices running a **GKI kernel 5.10 or newer**: Android 12+ devices that
   *launched* on 12 or later (`android12-5.10`, `android13-5.15`, `android14-6.1`, …). A device
   upgraded to Android 12/13 but still on a 4.19/5.4 kernel is not supported, and neither is
-  Android 11 (5.4). `uname -r` on the device tells.
+  Android 11 (5.4). `uname -r` on the device tells. The kernel also needs BTF
+  (`/sys/kernel/btf/vmlinux`): `android12-5.10` builds can lack it — the Android 12/12L
+  emulator kernels do, so the CI expects them to be refused — while the `android13-*` and
+  later GKI kernels ship it. `--check` tells for a given device.
 
 `eptracer --check` answers for the machine it runs on: it checks the kernel, BTF, uprobes,
 cgroup v2 and the BPF features, then loads every BPF program through the verifier on its own
@@ -145,6 +148,13 @@ and reports which feature a rejected one would cost.
 GKI kernels are built without `CONFIG_FTRACE_SYSCALLS`, so the per-syscall tracepoints
 (`syscalls/sys_enter_*`) do not exist there; the socket capture of `-H` and the trust-store
 detection of `-I` fall back on `raw_syscalls`, dispatching on the syscall number.
+
+From Android 15, netd attaches its own cgroup `connect4`/`connect6` programs exclusively
+(without `BPF_F_ALLOW_MULTI`), and the kernel then refuses any other connect program in the
+hierarchy. There `-I` redirects `connect(2)` at the syscall entry instead: the destination is
+rewritten in the process' sockaddr just before the kernel copies it in, and put back at the
+exit. The programs doing it use `bpf_probe_write_user`, so they are only loaded where the
+cgroup hook is taken (a kernel in lockdown would refuse them).
 
 The support matrix is tested on every change (see [Testing](#testing)).
 
@@ -199,7 +209,7 @@ does). Vendored dependencies (git submodules): **bpftool** (also provides **libb
 | unit (`bench/run_unit.sh`) | TLS record layer, key store, anchor search, HTTP/1 framing | every build |
 | kernel (`tests/e2e/run.sh`) | every feature end to end, one kernel at a time: 5.4 (must be refused), 5.10, 5.15, 6.1, 6.6, 6.12, 6.18, RHEL 9, bpf-next | [little-vm-helper](https://github.com/cilium/little-vm-helper) VMs |
 | distro (`tests/distro/run.sh IMAGE`) | the TLS libraries and paths of each distribution (OpenSSL 1.1/3.x, GnuTLS, musl), x86_64 and arm64 | privileged containers on the runner kernel |
-| android (`tests/android/run.sh`) | Conscrypt capture, `--package` on a zygote-forked app, splice with a proxy, raw_syscalls fallback: API 30 (must be refused) to 36 | x86_64 emulator |
+| android (`tests/android/run.sh`) | Conscrypt capture, `--package` on a zygote-forked app, splice with a proxy, raw_syscalls fallback: API 30–32 (must be refused: kernel 5.4, or 5.10 without BTF) to 36 | x86_64 emulator |
 
 The e2e scenarios run the real binary against a local origin (Python, self-signed) and the
 Burp-style mock proxy in `bench/`: syscalls (`-S`), stack samples (`-s`), cleartext HTTP, TLS

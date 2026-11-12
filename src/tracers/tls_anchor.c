@@ -563,8 +563,43 @@ static size_t anchor_table_refs(enum tls_anchor_arch arch, const uint8_t *code, 
 			const struct anchor_table *hit = anchor_table_at(t, nt, page + ((a >> 10) & 0xfff));
 			if (hit) { refs[n] = vaddr + i; bits[n] = hit->bits; n++; }
 		}
+		/* OpenSSL's hand-written arm64 SHA-2 (sha256-armv8.S, ...) keeps
+		 * the constants next to the code and reaches them with a single
+		 * adr: only one landing exactly on a table start counts, an adr
+		 * into the middle of one is something else */
+		for (size_t i = 0; i + 4 <= len && n < cap; i += 4) {
+			uint32_t insn = anchor_rd32le(code + i);
+			if ((insn & 0x9f000000) != 0x10000000)
+				continue;
+			uint64_t imm = (uint64_t)((insn >> 5) & 0x7ffff) << 2 | ((insn >> 29) & 3);
+			uint64_t target = vaddr + i + (uint64_t)anchor_sext(imm, 21);
+			const struct anchor_table *hit = anchor_table_at(t, nt, target);
+			if (hit && hit->vaddr == target) { refs[n] = vaddr + i; bits[n] = hit->bits; n++; }
+		}
 	}
 	return n;
+}
+
+/*
+ * The entry of the arm64 function holding ref, for code without unwind
+ * information (OpenSSL's perlasm emits no CFI on arm64): the closest
+ * "stp x29, x30, [sp, #-N]!" above it, the frame setup every one of those
+ * functions starts with — or the branch target its dispatcher jumps to, with
+ * the arguments untouched either way. A ret met first means ref is not in a
+ * function that sets up a frame: 0.
+ */
+static uint64_t anchor_arm64_entry_before(const uint8_t *code, uint64_t vaddr, uint64_t ref)
+{
+	for (uint64_t back = 0; back <= 512 && ref - back >= vaddr; back += 4) {
+		uint32_t insn = anchor_rd32le(code + (ref - back - vaddr));
+		if (back && (insn == 0xd65f03c0 || insn == 0xd65f0bff || insn == 0xd65f0fff))
+			return 0;   /* ret, retaa, retab: the previous function */
+		if ((insn & 0xffc07fff) == 0xa9807bfd)
+			return ref - back;   /* stp x29, x30, [sp, #imm]! */
+		if (ref - back == vaddr)
+			break;
+	}
+	return 0;
 }
 
 int tls_anchor_find_hmac(const char *path, struct tls_sha_hit *out, size_t cap)
@@ -620,6 +655,8 @@ static int anchor_find_hmac(const char *path, uint64_t elf_off, struct tls_sha_h
 					      refs, bits, ANCHOR_MAX_FUNCS * 4);
 		for (size_t i = 0; i < nr && (size_t)found < cap; i++) {
 			uint64_t fn = anchor_function_of(&hdr, refs[i]), off;
+			if (!fn && arch == TLS_ANCHOR_ARM64)
+				fn = anchor_arm64_entry_before(d->d_buf, sh.sh_addr, refs[i]);
 			if (!fn || anchor_vaddr_to_off(elf, fn, &off) != 0)
 				continue;
 			int dup = 0;

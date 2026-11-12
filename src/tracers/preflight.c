@@ -179,6 +179,7 @@ static const char *pf_feature_of(const char *prog)
 		{ "trace_connect",   "-H peer tracking" },
 		{ "trace_close",     "-H peer tracking" },
 		{ "trace_open",      "-I CA detection" },
+		{ "intercept_raw_",  "-I where netd holds the connect hook (Android 15+)" },
 		{ "intercept_",      "-I interception" },
 		{ "probe_tls_",      "--tls-mode splice" },
 		{ "probe_hmac_",     "--tls-mode splice" },

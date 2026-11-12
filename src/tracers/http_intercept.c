@@ -86,6 +86,60 @@ struct intercept_hook {
 static struct intercept_hook intercept_hooks[3];
 static int intercept_hook_count = 0;
 
+/* The syscall-entry redirect, when the cgroup connect hook is not ours to use */
+static struct bpf_link *intercept_raw_links[2];
+
+/*
+ * http_intercept_needs_raw_redirect
+ *
+ * Description:
+ * Tells, before the BPF object is loaded, whether connect(2) will have to be
+ * redirected at the syscall entry: the cgroup root already holds a connect4
+ * program attached without BPF_F_ALLOW_MULTI — netd's, from Android 15 — so
+ * the kernel refuses ours anywhere in the hierarchy. Asked up front because
+ * the fallback programs are only loaded when needed: their helper is refused
+ * by a kernel in lockdown, which would fail the whole load for everyone.
+ *
+ * Return:
+ * 1 when the fallback is needed (or the hook cannot be queried), 0 otherwise.
+ * */
+int http_intercept_needs_raw_redirect(void)
+{
+	__u32 flags = 0, count = 0;
+	int fd = -1, ret = 0;
+
+	/* for the test suite: exercise the Android 15+ path on any kernel */
+	if (getenv("EPTRACER_FORCE_RAW_REDIRECT"))
+		return 1;
+	fd = open(INTERCEPT_CGROUP_ROOT, O_RDONLY | O_CLOEXEC);
+	if (fd < 0)
+		return 0;   /* no cgroup v2: interception fails later, and says why */
+	if (bpf_prog_query(fd, BPF_CGROUP_INET4_CONNECT, 0, &flags, NULL, &count) != 0)
+		ret = 1;
+	else
+		ret = count > 0 && !(flags & BPF_F_ALLOW_MULTI);
+	close(fd);
+	return ret;
+}
+
+/* Attaches the syscall-entry redirect: 0 when connect(2) is covered by it */
+static int intercept_attach_raw(struct eptracer_bpf *skel)
+{
+	if (bpf_program__fd(skel->progs.intercept_raw_connect) < 0)
+		return -1;   /* not loaded: the cgroup hook looked available */
+	intercept_raw_links[0] = bpf_program__attach(skel->progs.intercept_raw_connect);
+	intercept_raw_links[1] = bpf_program__attach(skel->progs.intercept_raw_connect_exit);
+	if (!intercept_raw_links[0] || !intercept_raw_links[1]) {
+		bpf_link__destroy(intercept_raw_links[0]);
+		bpf_link__destroy(intercept_raw_links[1]);
+		intercept_raw_links[0] = intercept_raw_links[1] = NULL;
+		return -1;
+	}
+	log_info("[+] The cgroup connect hook is held exclusively (netd, Android 15+): "
+		 "connect(2) is redirected at the syscall entry instead");
+	return 0;
+}
+
 static pthread_t intercept_accept_thread;
 static int intercept_accept_started = 0;
 
@@ -312,9 +366,18 @@ static int intercept_attach_cgroup(struct eptracer_bpf *skel)
 		return -1;
 	}
 
+	if (getenv("EPTRACER_FORCE_RAW_REDIRECT"))
+		return intercept_attach_raw(skel);
+
 	if (intercept_attach_one(skel->progs.intercept_connect4,
 				 BPF_CGROUP_INET4_CONNECT) < 0) {
-		log_error("[!] Cannot attach the IPv4 redirect: %s", strerror(errno));
+		int err = errno;
+
+		/* EPERM: another program owns the hook exclusively. The
+		 * syscall-entry redirect covers IPv4 and IPv6 alike */
+		if (err == EPERM && intercept_attach_raw(skel) == 0)
+			return 0;
+		log_error("[!] Cannot attach the IPv4 redirect: %s", strerror(err));
 		return -1;
 	}
 
@@ -1241,6 +1304,10 @@ void http_intercept_stop()
 		hook->link = NULL;
 	}
 	intercept_hook_count = 0;
+	for (i = 0; i < 2; i++) {
+		bpf_link__destroy(intercept_raw_links[i]);
+		intercept_raw_links[i] = NULL;
+	}
 
 	if (intercept_config_fd >= 0)
 		bpf_map_update_elem(intercept_config_fd, &key, &cfg, BPF_ANY);

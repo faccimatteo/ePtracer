@@ -6,7 +6,8 @@ name: ci
 #   kernel   little-vm-helper VMs, one kernel each, 5.4 (must be refused) .. bpf-next
 #   distro   privileged containers on the runner kernel: the TLS libraries and
 #            paths each distribution ships, on x86_64 and arm64
-#   android  emulator, one API level each, 30 (kernel 5.4: must be refused) .. 36
+#   android  emulator, one API level each, 30..36 (30 has kernel 5.4, 31/32 no
+#            BTF: those must be refused)
 #
 # A v* tag publishes the binaries as a GitHub release once everything passed.
 
@@ -184,10 +185,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        api: [31, 32, 33, 34, 35, 36]
+        api: [33, 34, 35, 36]
         include:
-          # Android 11, kernel 5.4: passes when ePtracer refuses to run
+          # passes when ePtracer refuses to run: Android 11 has kernel 5.4,
+          # the Android 12/12L emulator kernels (android12-5.10) have no BTF
           - api: 30
+            expect: --expect-unsupported
+          - api: 31
+            expect: --expect-unsupported
+          - api: 32
             expect: --expect-unsupported
     steps:
       - uses: actions/checkout@v7
