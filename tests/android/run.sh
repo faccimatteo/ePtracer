@@ -65,12 +65,20 @@ for _ in $(seq 1 180); do
 	[ "$("${ADB[@]}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ] && break
 	sleep 2
 done
-"${ADB[@]}" root >/dev/null 2>&1 && sleep 2 && "${ADB[@]}" wait-for-device
-if [ "$("${ADB[@]}" shell id -u | tr -d '\r')" = 0 ]; then
-	ROOT_SH=(sh)
-elif "${ADB[@]}" shell su -c id 2>/dev/null | grep -q 'uid=0'; then
-	ROOT_SH=(su -c sh)
-else
+# adb can drop the device (offline) for a few seconds right after boot, and
+# `adb root` restarts adbd: retry rather than take a transient for "no root"
+ROOT_SH=()
+for _ in $(seq 1 15); do
+	"${ADB[@]}" root >/dev/null 2>&1 && sleep 2
+	"${ADB[@]}" wait-for-device 2>/dev/null
+	if [ "$("${ADB[@]}" shell id -u 2>/dev/null | tr -d '\r')" = 0 ]; then
+		ROOT_SH=(sh); break
+	elif "${ADB[@]}" shell su -c id 2>/dev/null | grep -q 'uid=0'; then
+		ROOT_SH=(su -c sh); break
+	fi
+	sleep 4
+done
+if [ ${#ROOT_SH[@]} -eq 0 ]; then
 	echo "[!] no root on the device: neither adb root nor su"; exit 2
 fi
 # run a command as root on the device: shipped as a script, so that no quoting
