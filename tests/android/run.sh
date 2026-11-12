@@ -88,7 +88,8 @@ x86_64) arch=x86_64 ;;
 arm64-v8a) arch=aarch64 ;;
 *) echo "[!] unsupported ABI $abi"; exit 2 ;;
 esac
-[ -x "$EPTRACER_DIR/eptracer-$arch" ] || { echo "[!] missing $EPTRACER_DIR/eptracer-$arch"; exit 2; }
+# -f, not -x: a downloaded CI artifact loses its mode, adb push sets it
+[ -f "$EPTRACER_DIR/eptracer-$arch" ] || { echo "[!] missing $EPTRACER_DIR/eptracer-$arch"; exit 2; }
 
 echo "device: $(prop ro.product.model), Android $(prop ro.build.version.release) (API $(prop ro.build.version.sdk)), $abi"
 echo "kernel: $("${ADB[@]}" shell uname -r | tr -d '\r')"

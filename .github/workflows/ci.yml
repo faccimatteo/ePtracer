@@ -22,6 +22,12 @@ on:
 permissions:
   contents: read
 
+env:
+  # little-vm-helper images are published under <kernel>-<build date> tags
+  # (the action derives the image file name from that shape); bump the date
+  # to move every kernel of the matrix to a newer build at once
+  LVH_IMAGE_DATE: "20261021.083220"
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -78,7 +84,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        kernel: ["5.10", "5.15", "6.1", "6.6", "6.12", "6.18", "rhel9.7", "bpf-next"]
+        kernel: ["5.10", "5.15", "6.1", "6.6", "6.12", "6.18", "7.2", "rhel9.7", "bpf-next"]
         include:
           # below the support floor: passes when ePtracer refuses to run
           - kernel: "5.4"
@@ -103,7 +109,7 @@ jobs:
         with:
           test-name: eptracer-${{ matrix.kernel }}
           image: complexity-test
-          image-version: ${{ matrix.kernel }}-main
+          image-version: ${{ matrix.kernel }}-${{ env.LVH_IMAGE_DATE }}
           host-mount: ./
           install-dependencies: "true"
           cmd: |
@@ -201,6 +207,7 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+          chmod +x dist/*
 
       - name: Build the fixture app
         run: tests/android/fixture/build.sh
